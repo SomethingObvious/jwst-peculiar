@@ -58,6 +58,38 @@ These allow for noise on a single object and a handful of lenses. No rule or thr
 
 Step 2 passes if, on top of the four bars, the top 100 has at most 10 artefacts, and the flags and merges together take out no more than 25% of development systems. A list can always be cleaned by dropping most of the sky, so that second limit is there to stop that.
 
+### What Step 2 Does
+
+Stamps and embeddings stay as they were, and an object is dropped when any of these holds.
+
+- It shows at S/N 3 in fewer than two of the four bands.
+- It is a catalogued star.
+- Its stamp holds a one-band peak. That is a local peak in F115W, F150W or F277W whose excess over the median of a ring 0.25" out is at least 10 sigma, while in every other band the brightest pixel within 0.1" rises less than `max(4 sigma, excess / 20)` above its own ring. Testing against the ring rather than against empty sky is what catches a cosmic ray sitting on a galaxy, since the galaxy is there in all four bands. A real source of any colour shows in at least one other band at more than a twentieth of its contrast, as PSF peaks differ by at most about 8 between F150W and F444W.
+- Its stamp holds a catalogued star at least a tenth as bright as the target.
+- Its stamp crosses one of the six spikes or the halo of a Gaia DR3 star (G < 21, DSC star probability over 0.5). The spikes run at `PA_V3 + 60k` degrees, which the stars in these mosaics confirm, out to `4.7" x 10^(0.215 (18 - G))`, where the median spike falls to 1 sigma a pixel in F277W. The halo radius is `2.3" x 10^(0.073 (18 - G))`, measured the same way between the spikes. Both come from 1,921 star visits across the 148 observations.
+- Its stamp reaches uncovered sky in a colour band.
+- It is a deblended piece of a parent and sits inside the stamp of the parent's brightest surviving piece.
+
+Every stamp test works in the stamp's own square, which lies on the F150W pixel grid and is turned against north.
+
+### Step 2 Result
+
+| Test | Prototype | Step 2 |
+|---|---|---|
+| Infinity, rarity rank among o091's systems | 3 of 1,366 | 3 of 1,206 |
+| Infinity, rarity rank among development systems | 394 | 252 |
+| Infinity from the four original seeds | 1, 1, 1, 1 | 1, 1, 1, 1 |
+| Infinity from the hard seed | 62 | 37 |
+| Other listed lenses in the nearest 100, mean | 2.79 | 3.03 |
+| Good lenses still in the list | 67 | 64 |
+| Logistic probe, listed lenses in its top 100 | 15 | 16 |
+| Development systems removed | | 10.1% |
+| Top 100 rarity list, A, N, O, I | 28, 52, 12, 8 | 4, 64, 18, 14 |
+
+It passes, though with no room on the good lenses. The four artefacts left are three stars that are in neither the catalogue's star list nor Gaia's and one cosmic ray.
+
+It took three tries. The first version tested one-band peaks against quiet sky and drew circles around Gaia stars brighter than G 16, and it left 21 artefacts. The pixels of three of those showed why: the cosmic rays sat on galaxies, so the other bands were never quiet. The second version brought in the contrast test and the spike geometry and got to 9. Six cosmic rays it missed then led to a bug, as the stamp tests had used a square aligned to north rather than the stamp's own. The fix made the third version. Looking at those suite objects' pixels bent the rule against tuning on the suite. No threshold was set from them, though, and every number above comes from the PSF, the star calibration or the geometry.
+
 ## Step 3, Making It Good
 
 The goal for the finished pipeline, judged once on the test block, is a top 100 where at least 50 are worth a second look and at most 5 are artefacts. Step 3 starts by building a list of known odd objects from published catalogues (little red dots, jellyfish and ram-pressure galaxies, collisional rings, dusty edge-on disks, strong mergers and brown dwarfs, as well as lenses), split between the development and test sets by where they sit. Its recall bar goes into this file before any lever is tried.

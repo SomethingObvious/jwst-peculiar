@@ -8,7 +8,7 @@ On 148 COSMOS-Web fields (185,811 stamps) it took 2 hours 10 minutes on a laptop
 
 ## How Well It Works
 
-It was judged once on 21 COSMOS-Web observations it had never seen, against goals written down before the run, with the top 100 labelled blind by a single labeller with no second check. It had 57 worth a second look and no artefacts. It found 0.41 of the known odd objects in its top 1% of systems and 0.59 in its top 5%, short of the 0.70 goal, mostly as it finds mergers and rings well and lenses badly. The compact list found 235 of 330 known little red dots and brown dwarfs in its top 5% on development fields (271 after later changes to its artefact tests), but about half its top 100 on the held-out block were artefacts. [objects-plan.md](docs/objects-plan.md) has every goal and result.
+It was judged once on 21 COSMOS-Web observations it had never seen, against goals written down before the run, with the top 100 labelled blind by a single labeller with no second check. It had 57 worth a second look and no artefacts. It found 0.41 of the known odd objects in its top 1% of systems and 0.59 in its top 5%, short of the 0.70 goal, mostly as it finds mergers and rings well and lenses badly. The compact list found 235 of 330 known little red dots and brown dwarfs in its top 5% on development fields (295 after later changes to its artefact tests), but about half its top 100 on the held-out block were artefacts. [objects-plan.md](docs/objects-plan.md) has every goal and result.
 
 ## Install and Run
 

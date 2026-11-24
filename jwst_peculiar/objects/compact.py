@@ -15,6 +15,8 @@ tests as `flag_*` columns.
   spikes are far fainter than its centre, and a galaxy is wider than the gap.
 - `one_band`: under 3 sigma in all but one band in the 0.1" aperture, or a one-band
   peak, its best band at S/N 10 or more and every other under max(4, a twentieth).
+  A faint red candidate, brightest in F444W and at 2 sigma in F277W with that light
+  centred, is seen in both.
 - `sharp`: more of its flux in 0.1" than a star has, by 3 sigma in one band or
   combined, which is a cosmic ray or hot pixel.
 - `one_pair`: seen in only one of NIRCam's two exposure pairs.
@@ -25,12 +27,15 @@ tests as `flag_*` columns.
 - `gaia`: within 0.3" of a Gaia star's spikes or halo.
 - `piece`: a deblended piece of a stamped object's parent, inside its stamp.
 - `pixel`: a lone peak by `flags.blobs` within 0.25" plus 1.5 of that band's
-  pixels, or a pixel 5 sigma under the sky as near in F277W and F444W and within
-  0.1" plus 1.5 pixels in F115W and F150W, as only the 0.1" flux of those is ranked.
+  pixels (beyond 0.1" for an F444W peak on a faint red candidate), or a pixel 5
+  sigma under the sky as near in F277W and F444W and within 0.1" plus 1.5 pixels in
+  F115W and F150W, as only the 0.1" flux of those is ranked.
 
 `objects compact` fits a 20-component Gaussian mixture to the unflagged candidates'
 three colours and two concentrations, and ranks them on minus the log density with
-each candidate's own errors added to every component.
+each candidate's own errors added to every component, averaged over three fits with
+different seeds. Two single fits share about 84 of their top 100 on COSMOS-Web, and
+two averages of three share 92.
 """
 
 from __future__ import annotations
@@ -73,7 +78,7 @@ BANDS = ("f115w", "f150w", "f277w", "f444w")
 RED, OFFSET = "f444w", 1_000_000
 MIN_SN, MAX_A, MAX_AREA = 10.0, 0.12, 60
 PEAK_SN, PEAK_FLOOR, PEAK_SHARE = 10.0, 4.0, 20.0
-NEXT, RED_SEEN = "f277w", 2.0
+NEXT, RED_SEEN, RED_CENTRED = "f277w", 2.0, 0.3
 # 99th percentile of 0.1" over 0.25" flux for 742 Gaia stars, G 19 to 21, S/N over 30
 PSF_SHARPEST = {"f115w": 0.88, "f150w": 0.865, "f277w": 0.70, "f444w": 0.61}
 SHARP_SIG, SHARP_FLOOR = 3.0, 5.0
@@ -91,7 +96,7 @@ EDGE = 1.0
 LINE_IN, LINE_OUT, LINE_SIDE = 0.4, 1.5, 0.25
 # a median of n pixels has 1.2533 times the noise of their mean
 LINE_SIG, LINE_SHARE, MEDIAN_NOISE = 4.0, 0.2, 1.2533
-COMPONENTS = 20
+COMPONENTS, FITS = 20, 3
 LIST, STAMPS = "compact.csv", "compact_stamps.npy"
 TILE, CUTOUT = 112, 2.4
 
@@ -112,6 +117,23 @@ def _snr(t: pd.DataFrame, band: str) -> Floats:
     return np.asarray(f / e, float)
 
 
+def faint_red(t: pd.DataFrame) -> Bools:
+    """Return which candidates are brightest in F444W and seen at 2 sigma in F277W.
+
+    The F277W light has to be centred, at least 0.3 of the 0.25" flux inside 0.1",
+    as an F444W hot pixel on a galaxy's outskirts gets its 2 sigma from the galaxy.
+    Known little red dots have 0.43 or more and those hot pixels 0.09 to 0.22.
+
+    Returns:
+        One flag per candidate.
+    """
+    z = np.column_stack([_snr(t, b) for b in BANDS])
+    top = z.argmax(axis=1) == BANDS.index(RED)
+    inner, outer = t[f"f_{NEXT}_10"].to_numpy(float), t[f"f_{NEXT}_25"].to_numpy(float)
+    centred = inner >= RED_CENTRED * outer
+    return np.asarray(top & (z[:, BANDS.index(NEXT)] >= RED_SEEN) & centred, bool)
+
+
 def one_band(t: pd.DataFrame) -> Bools:
     """Return which candidates show in only one band, or are a one-band peak.
 
@@ -123,7 +145,7 @@ def one_band(t: pd.DataFrame) -> Bools:
         One flag per candidate.
     """
     z = np.column_stack([_snr(t, b) for b in BANDS])
-    red = (z.argmax(axis=1) == BANDS.index(RED)) & (z[:, BANDS.index(NEXT)] >= RED_SEEN)
+    red = faint_red(t)
     top, rest = z.max(axis=1), np.sort(z, axis=1)[:, -2]
     peak = (top >= PEAK_SN) & (rest < np.maximum(PEAK_FLOOR, top / PEAK_SHARE)) & ~red
     seen = (z >= DETECTED).sum(axis=1) + (red & (z[:, BANDS.index(NEXT)] < DETECTED))
@@ -234,13 +256,19 @@ def piece(t: pd.DataFrame, objects: pd.DataFrame) -> Bools:
     return out
 
 
-def _within(t: pd.DataFrame, ra: Floats, dec: Floats, *, r: float) -> Bools:
+def _within(
+    t: pd.DataFrame, ra: Floats, dec: Floats, *, r: float, past: float = -1.0
+) -> Bools:
+    # whether any of the points lies further than `past` and within `r` of each row
+    out = np.zeros(len(t), bool)
     if not len(ra) or not len(t):
-        return np.zeros(len(t), bool)
+        return out
     dec0 = float(t.dec.median())
-    tree = cKDTree(sky_xy(ra, dec, dec0))
-    d, _ = tree.query(sky_xy(t.ra, t.dec, dec0), distance_upper_bound=r)
-    return np.asarray(np.isfinite(d), bool)
+    pts, rows = sky_xy(ra, dec, dec0), sky_xy(t.ra, t.dec, dec0)
+    for i, near in enumerate(cKDTree(pts).query_ball_point(rows, r)):
+        if near:
+            out[i] = bool((np.hypot(*(pts[near] - rows[i]).T) > past).any())
+    return out
 
 
 def bad_pixel(t: pd.DataFrame, bands: dict[str, Band], lone: pd.DataFrame) -> Bools:
@@ -249,12 +277,15 @@ def bad_pixel(t: pd.DataFrame, bands: dict[str, Band], lone: pd.DataFrame) -> Bo
     A pixel counts when it lies within 0.25" plus 1.5 of its band's pixels, since a
     hot pixel just outside 0.25" still leaks into the 0.063" long-wave aperture. A
     pixel under the sky in F115W or F150W counts within 0.1", the only aperture of
-    theirs the ranking reads, which kept 6 more of 158 known little red dots.
+    theirs the ranking reads, which kept 6 more of 158 known little red dots. A lone
+    F444W peak within 0.1" of a faint red candidate is its own centre, which was the
+    only reason 31 known little red dots were flagged.
 
     Returns:
         One flag per candidate.
     """
     out = np.zeros(len(t), bool)
+    red = faint_red(t)
     for b in BANDS:
         band = bands[b]
         reach = APERTURE + BLOCK * band.scale
@@ -264,7 +295,12 @@ def bad_pixel(t: pd.DataFrame, bands: dict[str, Band], lone: pd.DataFrame) -> Bo
         ra, dec = np.asarray(sky.ra.deg, float), np.asarray(sky.dec.deg, float)
         out |= _within(t, ra, dec, r=near)
         mine = lone.loc[lone.band == b]
-        out |= _within(t, mine.ra.to_numpy(float), mine.dec.to_numpy(float), r=reach)
+        ra, dec = mine.ra.to_numpy(float), mine.dec.to_numpy(float)
+        hit = _within(t, ra, dec, r=reach)
+        if b == RED:
+            # a faint red source's own peak shows in F444W alone, which is its colour
+            hit &= ~red | _within(t, ra, dec, r=reach, past=INNER)
+        out |= hit
     return out
 
 
@@ -383,12 +419,12 @@ def features(t: pd.DataFrame) -> tuple[Floats, Floats]:
     return x, xe
 
 
-def fit(x: Floats) -> Any:  # noqa: ANN401 scikit-learn has no types
+def fit(x: Floats, seed: int = 0) -> Any:  # noqa: ANN401 scikit-learn has no types
     """Return the mixture the candidates are ranked under, fitted to `x`."""
     from sklearn.mixture import GaussianMixture  # noqa: PLC0415 only compact needs it
 
     mix = GaussianMixture(
-        COMPONENTS, covariance_type="full", random_state=0, max_iter=500
+        COMPONENTS, covariance_type="full", random_state=seed, max_iter=500
     )
     return mix.fit(x)
 
@@ -504,7 +540,7 @@ def ranked(t: pd.DataFrame, n: int) -> pd.DataFrame:
     flagged = t.filter(like="flag_").to_numpy().any(axis=1)
     keep = t.loc[~flagged].reset_index(drop=True)
     x, xe = features(keep)
-    keep["score"] = rarity(fit(x), x, xe)
+    keep["score"] = np.mean([rarity(fit(x, s), x, xe) for s in range(FITS)], axis=0)
     cols = ["id", "field", "label", "ra", "dec", "sn", "a_arcsec", "score"]
     best = keep.sort_values("score", ascending=False).head(n)[cols]
     k = len(best)

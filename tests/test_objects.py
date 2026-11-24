@@ -19,6 +19,7 @@ from jwst_peculiar.objects import Config, read_config, run, written
 from jwst_peculiar.objects.check import report
 from jwst_peculiar.objects.compact import (
     BANDS,
+    bad_pixel,
     dark_middle,
     near_edge,
     on_line,
@@ -603,13 +604,42 @@ def test_cut_runs_as_many_fields_at_once_as_cores_and_memory_allow(
 
 def test_a_faint_red_source_counts_as_seen_in_f277w_at_2_sigma() -> None:
     # S/N per band in the 0.1" aperture, F115W to F444W
-    rows = {"red dot": [0.5, 0.7, 3.0, 15.0], "F444W hot pixel": [0.5, 0.7, 0.4, 15.0]}
+    # and F277W's 0.25" flux, mostly a galaxy's for a hot pixel on its outskirts
+    rows = {
+        "red dot": ([0.5, 0.7, 3.0, 15.0], 5.0),
+        "F444W hot pixel": ([0.5, 0.7, 0.4, 15.0], 1.0),
+        "F444W hot pixel on a galaxy": ([0.5, 0.7, 2.4, 15.0], 20.0),
+    }
     t = pd.DataFrame({
-        f"{k}_{b}_10": [v[i] if k == "f" else 1.0 for v in rows.values()]
+        f"{k}_{b}_10": [v[0][i] if k == "f" else 1.0 for v in rows.values()]
         for i, b in enumerate(BANDS)
         for k in ("f", "e")
     })
+    t["f_f277w_25"] = [v[1] for v in rows.values()]
     assert dict(zip(rows, one_band(t).tolist(), strict=True)) == {
         "red dot": False,
         "F444W hot pixel": True,
+        "F444W hot pixel on a galaxy": True,
+    }
+
+
+def test_a_faint_red_candidate_is_not_flagged_for_its_own_f444w_peak() -> None:
+    # S/N per band in the 0.1" aperture, F115W to F444W, its place and its F444W peak's
+    rows = {
+        "red dot, peak at its centre": ([0.5, 0.7, 3.0, 15.0], 4.0, 0.03),
+        "red dot, peak 0.2 arcsec off": ([0.5, 0.7, 3.0, 15.0], 8.0, 0.2),
+        "blue galaxy, peak at its centre": ([15.0, 10.0, 5.0, 3.0], 12.0, 0.03),
+    }
+    t = offsets([v[1] for v in rows.values()], [0.0] * len(rows))
+    for i, b in enumerate(BANDS):
+        t[f"f_{b}_10"] = [v[0][i] for v in rows.values()]
+        t[f"f_{b}_25"] = t[f"f_{b}_10"] * 2
+        t[f"e_{b}_10"] = 1.0
+    peaks = offsets([v[1] + v[2] for v in rows.values()], [0.0] * len(rows))
+    lone = peaks.assign(band="f444w")
+    bands = {b: band(np.zeros((800, 800), np.float32)) for b in BANDS}
+    assert dict(zip(rows, bad_pixel(t, bands, lone).tolist(), strict=True)) == {
+        "red dot, peak at its centre": False,
+        "red dot, peak 0.2 arcsec off": True,
+        "blue galaxy, peak at its centre": True,
     }

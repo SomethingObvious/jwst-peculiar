@@ -474,17 +474,29 @@ def test_init_finds_every_tile_when_tiles_follow_the_filter(tmp_path: Path) -> N
     assert "hdu" not in keys
 
 
-def test_init_points_at_an_image_kept_in_the_primary_hdu(
+def test_init_and_check_take_gzipped_mosaics_with_the_image_first(
     tmp_path: Path,
 ) -> None:
     folder = tmp_path / "m"
     folder.mkdir()
     for b in ("f150w", "f277w", "f444w"):
-        name = f"egs-grizli-v7.2-{b}-clear_drc_sci.fits"
-        fits.PrimaryHDU(np.ones((4, 4), np.float32)).writeto(folder / name)
+        name = f"egs-grizli-v7.2-{b}-clear_drc_sci.fits.gz"
+        fits.PrimaryHDU(np.ones((40, 40), np.float32)).writeto(folder / name)
     keys = guess(folder)
+    assert keys["pattern"] == "m/{field}-{band}-clear_drc_sci.fits.gz"
     assert keys["fields"] == ["egs-grizli-v7.2"]
     assert keys["hdu"] == 0
+    cfg = Config(
+        name="t",
+        out=tmp_path / "run",
+        pattern=f"{tmp_path.as_posix()}/{keys['pattern']}",
+        bands=("f150w", "f277w", "f444w"),
+        colour=("f444w", "f277w", "f150w"),
+        fields=("egs-grizli-v7.2",),
+        hdu=0,
+        device="cpu",
+    )
+    assert not [p for p in report(cfg) if "stopped early" in p]
 
 
 def test_init_ignores_weight_and_error_maps(tmp_path: Path) -> None:

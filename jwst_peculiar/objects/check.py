@@ -60,7 +60,8 @@ def _short(path: Path, hdu: int | str) -> bool:
     except (OSError, KeyError, IndexError):
         return True
     end = 0 if info is None else info["datLoc"] + info["datSpan"]
-    return path.stat().st_size < end
+    # a gzipped file is smaller than its data, and cut finds one that's broken
+    return not path.name.endswith(".gz") and path.stat().st_size < end
 
 
 def _weights_cached() -> bool:

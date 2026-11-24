@@ -94,7 +94,7 @@ def _after_band(seen: Seen) -> Seen:
 
 def _scan(folder: Path) -> Seen:
     seen: Seen = defaultdict(lambda: defaultdict(set))
-    for path in sorted(folder.glob("*.fits")):
+    for path in sorted([*folder.glob("*.fits"), *folder.glob("*.fits.gz")]):
         got = split_name(path.name)
         if got:
             field, pattern, band = got
@@ -123,7 +123,7 @@ def guess(folder: Path) -> dict[str, object]:
     """
     seen = _scan(folder)
     if not seen:
-        msg = f"No .fits file in {folder} has a NIRCam filter like f277w in its name."
+        msg = f"No .fits or .fits.gz in {folder} has a filter like f277w in its name."
         raise SystemExit(msg)
     pattern = max(seen, key=lambda p: sum(map(len, seen[p].values())))
     fields = seen[pattern]

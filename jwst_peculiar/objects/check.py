@@ -114,6 +114,10 @@ def report(cfg: Config) -> list[str]:
     names = cfg.field_names()
     missing = cfg.missing()
     print(f"{len(names)} fields, bands {', '.join(cfg.bands)}")  # noqa: T201 the command's report
+    from jwst_peculiar.objects.compact import BANDS, has_bands  # noqa: PLC0415 only the report needs it
+
+    if not has_bands(cfg):
+        print(f"no compact list, as it needs {', '.join(BANDS)}")  # noqa: T201 the command's report
     problems = [f"missing {p}" for p in missing[:10]]
     if len(missing) > 10:  # noqa: PLR2004 enough to see the pattern
         problems.append(f"and {len(missing) - 10} more missing mosaics")

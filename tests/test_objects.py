@@ -216,12 +216,15 @@ def test_config_resolves_paths_and_finds_fields(
 
 
 def test_band_names_in_capitals_mean_the_same_bands(tmp_path: Path) -> None:
+    (tmp_path / "d").mkdir()
+    (tmp_path / "d" / "a_F277W.fits").touch()
     (tmp_path / "survey.yaml").write_text(
-        "name: t\nout: run\npattern: d/{field}_{BAND}.fits\nfields: [a]\n"
+        "name: t\nout: run\npattern: d/{field}_{BAND}.fits\n"
         "bands: [F115W, F150W, F277W, F444W]\ndetect: F277W\n",
         encoding="utf-8",
     )
     cfg = read_config(tmp_path / "survey.yaml")
+    assert cfg.field_names() == ["a"]
     assert cfg.bands == ("f115w", "f150w", "f277w", "f444w")
     assert cfg.detect == "f277w"
     assert cfg.band_path("a", "f115w") == tmp_path / "d" / "a_F115W.fits"
@@ -440,6 +443,23 @@ def test_check_says_when_the_flux_columns_will_not_be_in_njy(
     )
     report(cfg)
     assert "units are 10*nJy, MJy/sr rather than MJy/sr" in capsys.readouterr().out
+
+
+def test_check_says_there_is_no_compact_list_without_f115w(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = Config(
+        name="t",
+        out=tmp_path / "run",
+        pattern=f"{tmp_path.as_posix()}/{{field}}_{{band}}.fits",
+        bands=("f090w", "f150w", "f277w", "f444w"),
+        colour=("f277w", "f150w", "f090w"),
+        fields=("a",),
+        device="cpu",
+    )
+    report(cfg)
+    said = capsys.readouterr().out
+    assert "no compact list, as it needs f115w, f150w, f277w, f444w" in said
 
 
 def test_detection_splits_a_blend_and_remembers_its_parent() -> None:

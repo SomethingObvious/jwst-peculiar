@@ -213,7 +213,8 @@ class Config:
         if self.fields:
             return list(self.fields)
         pre, post = (
-            part.format(band=self.detect) for part in self.pattern.split("{field}", 1)
+            part.format(band=self.detect, BAND=self.detect.upper())
+            for part in self.pattern.split("{field}", 1)
         )
         found = (Path(f).as_posix() for f in glob.glob(pre + "*" + post))  # noqa: PTH207 {field} can sit in a folder name
         names = sorted(f[len(pre) : len(f) - len(post)] for f in found)

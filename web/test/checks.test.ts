@@ -1,68 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { parseRank, readDisplay, runBase } from '../src/lib/checks';
-import { cmapRow } from '../src/lib/colormaps';
+import { parseRank, runBase } from '../src/lib/checks';
 import { TileFrame } from '../src/lib/frame';
-import type { Cmap, Display, MosaicInfo, TileInfo } from '../src/lib/types';
+import type { MosaicInfo, TileInfo } from '../src/lib/types';
 import { tanOf } from '../src/lib/wcs';
-
-const defaults: Display = {
-  stretch: 'asinh',
-  limitMode: 'p995',
-  lo: [0],
-  hi: [1],
-  cmap: 'grey',
-  invert: false,
-  mono: false,
-  overlay: true,
-  overlayOpacity: 0.45,
-  overlayCmap: 'inferno',
-  threshold: 0.6,
-  source: 'pass2',
-  contours: false,
-  catalogues: true,
-};
-
-describe('readDisplay', () => {
-  it('resets a colour map it has no row for', () => {
-    const d = readDisplay({ cmap: 'plasma', overlayCmap: 'magma' }, defaults, 2);
-    expect(d.cmap).toBe('grey');
-    expect(d.overlayCmap).toBe('magma');
-  });
-
-  it('keeps a pass 1 map only in a two-pass run', () => {
-    expect(readDisplay({ source: 'diff' }, defaults, 1).source).toBe('pass2');
-    expect(readDisplay({ source: 'diff' }, defaults, 2).source).toBe('diff');
-  });
-
-  it('refuses values of the wrong type or out of range', () => {
-    const d = readDisplay(
-      {
-        stretch: 'cube',
-        lo: 'low',
-        hi: [2, 'x'],
-        invert: 'yes',
-        overlayOpacity: 4,
-        threshold: 0.3,
-        mono: true,
-      },
-      defaults,
-      2,
-    );
-    expect(d).toEqual({ ...defaults, threshold: 0.3, mono: true });
-  });
-
-  it('gives the defaults for prefs that are not an object', () => {
-    expect(readDisplay(null, defaults, 2)).toEqual(defaults);
-    expect(readDisplay('grey', defaults, 2)).toEqual(defaults);
-  });
-});
-
-describe('cmapRow', () => {
-  it('gives row 0 for a name it does not know, never -1', () => {
-    expect(cmapRow('plasma' as Cmap)).toBe(0);
-    expect(cmapRow('heat')).toBe(5);
-  });
-});
 
 describe('parseRank', () => {
   it('takes a whole number with spaces around it', () => {

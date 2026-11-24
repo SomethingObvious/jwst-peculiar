@@ -37,8 +37,6 @@ if TYPE_CHECKING:
 
     from jwst_peculiar.config import Config
 
-_BLANK_MAP = np.zeros(1, "<f4").tobytes()
-
 
 @dataclass(frozen=True)
 class ObjectTile:
@@ -59,15 +57,12 @@ def _entry(rank: int, row: pd.Series[Any], meta: dict[str, Any]) -> dict[str, An
         "key": row.id,
         "rank": rank,
         "score": None if score is None else float(score),
-        "in_reference": False,
         "mosaic": row.field,
         "x0": round(float(x) - h, 2),
         "y0": round(float(y) - h, 2),
         "size": round(2 * h, 2),
         "ra": float(row.ra),
         "dec": float(row.dec),
-        "peak": [0, 0],
-        "has_cutout": False,
     }
 
 
@@ -106,18 +101,9 @@ class ObjectBundle:
             "writable": writable,
             "run": {
                 "name": f"{cfg.name} {listing.stem}",
-                "model": "zoobot-encoder-convnext_nano",
-                "detector": "objects",
-                "resolution": 224,
-                "patch_size": 224,
-                "grid": [1, 1],
-                "score_mode": listing.stem,
-                "passes": 1,
-                "n_reference": 0,
                 "created": datetime.fromtimestamp(
                     listing.stat().st_mtime, UTC
                 ).isoformat(),
-                "args": {},
             },
             "mosaics": mosaics,
             "tiles": entries,
@@ -154,14 +140,8 @@ class ObjectBundle:
             png = self.root / name.removesuffix(".png") / "field.png"
             return png.read_bytes(), "image/png"
         stem = Path(name).stem
-        if (
-            folder not in ("tiles", "maps")
-            or not stem.isdigit()
-            or int(stem) >= len(self.tiles)
-        ):
+        if folder != "tiles" or not stem.isdigit() or int(stem) >= len(self.tiles):
             raise FileNotFoundError(path)
-        if folder == "maps":
-            return _BLANK_MAP, "application/octet-stream"
         return self._png(int(stem)), "image/png"
 
     def paths(self) -> Iterator[str]:
@@ -174,7 +154,6 @@ class ObjectBundle:
         yield "verdicts.json"
         for i in range(len(self.tiles)):
             yield f"tiles/{i:06d}.png"
-            yield f"maps/{i:06d}.f32"
         for f in self.index["mosaics"]:
             yield f"mosaics/{f}.png"
 
@@ -256,7 +235,7 @@ def add_site_meta(bundle: ObjectBundle, out_dir: Path, site_url: str) -> None:
         "url": url,
         "description": desc,
         "applicationCategory": "Science",
-        "operatingSystem": "Any browser with WebGL2",
+        "operatingSystem": "Any current browser",
         "isAccessibleForFree": True,
         "image": url + "social.png",
     }

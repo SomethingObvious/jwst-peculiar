@@ -2,7 +2,6 @@
   import Glyph from './Glyph.svelte';
   import { VERDICTS, shortMosaic, type Bundle, type Filters } from '../lib/types';
   import { raHms, decDms } from '../lib/wcs';
-  import { orList } from '../lib/catalogues';
   import type { Verdicts } from '../lib/verdicts.svelte';
 
   let {
@@ -68,21 +67,6 @@
     }),
   );
   const mosaicNames = $derived(Object.keys(bundle.mosaics));
-  const xmatch = $derived(bundle.run.xmatch);
-  const Q_LEVELS = [0.01, 0.05, 0.1, 0.2];
-  const calibrated = $derived((bundle.run.n_calibration ?? 0) > 0);
-  const underQ = $derived(
-    Q_LEVELS.map((level) =>
-      bundle.tiles.reduce((n, t) => n + (t.q !== undefined && t.q <= level ? 1 : 0), 0),
-    ),
-  );
-  const unmatched = $derived(
-    bundle.tiles.reduce((n, t) => n + (t.xmatch?.uncatalogued ? 1 : 0), 0),
-  );
-  const matched = $derived(
-    bundle.tiles.reduce((n, t) => n + (t.xmatch && !t.xmatch.uncatalogued ? 1 : 0), 0),
-  );
-
   // Keeps the current row in view without animating, so stepping never waits on a scroll.
   $effect(() => {
     if (!scroller || pos < 0) {
@@ -134,44 +118,6 @@
         {/each}
       </select>
     </div>
-    {#if xmatch}
-      <div class="row2">
-        <select
-          class="ctl"
-          bind:value={filters.match}
-          aria-label="Catalogue filter"
-          title="Uncatalogued means nothing in {orList(
-            xmatch.checked,
-          )} within {xmatch.radius_arcsec}&Prime; of the peak"
-        >
-          <option value="all">Catalogued or Not</option>
-          <option value="uncatalogued"
-            >Uncatalogued ({unmatched.toLocaleString('en-CA')})</option
-          >
-          <option value="catalogued"
-            >Catalogued ({matched.toLocaleString('en-CA')})</option
-          >
-        </select>
-      </div>
-    {/if}
-    {#if calibrated}
-      <div class="row2">
-        <select
-          class="ctl"
-          aria-label="False discovery rate"
-          title="Tiles whose q-value is at or under the level, so about that share of them are expected to be ordinary for the reference fields"
-          value={filters.qMax === null ? '' : String(filters.qMax)}
-          onchange={(e) => (filters.qMax = num(e.currentTarget.value))}
-        >
-          <option value="">Any q-value</option>
-          {#each Q_LEVELS as level, j (level)}
-            <option value={String(level)}
-              >q &le; {level} ({(underQ[j] ?? 0).toLocaleString('en-CA')})</option
-            >
-          {/each}
-        </select>
-      </div>
-    {/if}
     <div class="row2">
       <span class="range">
         <span class="label">Score</span>
@@ -197,9 +143,7 @@
       <span class="sort">
         <select class="ctl" bind:value={filters.sort} aria-label="Sort by">
           <option value="rank">Rank</option>
-          {#if bundle.run.embedding_dims}<option value="priority">Learned</option>{/if}
           <option value="score">Score</option>
-          <option value="delta">Pass 1 Change</option>
           <option value="ra">RA</option>
           <option value="dec">Dec</option>
         </select>
@@ -256,12 +200,10 @@
             Object.assign(filters, {
               text: '',
               verdict: 'all',
-              match: 'all',
               mosaic: '',
               scoreMin: null,
               scoreMax: null,
-              qMax: null,
-            })}>Show Every Tile</button
+            })}>Show Every Object</button
         >
       </div>
     {/if}
@@ -307,24 +249,7 @@
           >
           <span class="line2">
             <span class="mname name">{shortMosaic(t.mosaic)}</span>
-            {#if t.xmatch?.uncatalogued}<svg
-                class="new"
-                width="9"
-                height="9"
-                viewBox="-4.5 -4.5 9 9"
-                role="img"
-                aria-label="Uncatalogued"
-                ><title
-                  >Uncatalogued, nothing within {xmatch?.radius_arcsec}&Prime; of the
-                  peak</title
-                ><circle r="3.4" /></svg
-              >{/if}
             <span class="coord num">{raHms(t.ra, 1)} {decDms(t.dec, 0)}</span>
-            {#if t.q !== undefined}<span
-                class="qv num"
-                title="q-value, the false discovery rate at this tile"
-                >q {t.q < 0.001 ? '<0.001' : t.q.toFixed(3)}</span
-              >{/if}
           </span>
         </button>
       {/each}
@@ -502,23 +427,8 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .new {
-    flex: none;
-    align-self: center;
-    fill: none;
-    stroke: var(--cat);
-    stroke-width: 1.3;
-    stroke-dasharray: 2.2 1.4;
-  }
   .coord {
     flex: none;
-    font-size: 10px;
-    color: var(--chalk-2);
-    white-space: nowrap;
-  }
-  .qv {
-    flex: none;
-    margin-left: auto;
     font-size: 10px;
     color: var(--chalk-2);
     white-space: nowrap;

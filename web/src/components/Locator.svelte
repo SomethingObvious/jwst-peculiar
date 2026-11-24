@@ -136,15 +136,15 @@
 </script>
 
 <div class="locator" bind:clientWidth={width}>
-  <!-- The keyboard reaches the same tiles through the index, so the map is a pointer shortcut. -->
+  <!-- The keyboard reaches the same objects through the index, so the map is a pointer shortcut. -->
   <canvas
     bind:this={canvas}
     style:height="{height}px"
     onclick={click}
-    aria-label="Where this tile sits on the mosaic, with {dots.length} other candidates marked"
+    aria-label="Where this object sits in its field, with {dots.length} others marked"
   ></canvas>
   <div class="legend">
-    <span><i class="foot"></i>This tile</span>
+    <span><i class="foot"></i>This object</span>
     <span><i class="dot"></i>{dots.length} more in the list</span>
   </div>
   {#if mosaic && tile && failed.has(tile.mosaic)}<p class="err">

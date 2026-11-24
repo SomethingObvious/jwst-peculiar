@@ -343,7 +343,8 @@ def test_verdicts_train_the_model_and_lists_open_in_the_viewer(
     assert png.shape == (N, N, 3)
     assert (png[-1] == 255).all()
     assert (png[0] == 0).all()
-    assert len(bundle.read("maps/000000.f32")[0]) == 4
+    with pytest.raises(FileNotFoundError):
+        bundle.read("maps/000000.f32")
 
 
 def test_one_list_can_mix_stamped_and_compact_objects(tmp_path: Path) -> None:

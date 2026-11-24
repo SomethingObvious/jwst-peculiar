@@ -6,8 +6,8 @@ import { defineConfig, type Plugin } from 'vite';
 
 const runDir = fileURLToPath(new URL('./public/run/', import.meta.url));
 
-// Stands in for the Python server's write endpoint so the writable path can be
-// tried against the fixture. It only exists under `npm run dev`.
+// Stands in for the Python server's write endpoint under `npm run dev`, which serves
+// a list exported with `jwst-peculiar view --export` and copied into public/run/.
 function devVerdicts(): Plugin {
   return {
     name: 'dev-verdicts',
@@ -67,7 +67,7 @@ export default defineConfig({
     emptyOutDir: true,
     target: 'es2022',
     assetsInlineLimit: 0,
-    // public/ only holds the fixture run, which must never ship in the package.
+    // public/ only holds a list to develop against, which must never ship in the package.
     copyPublicDir: false,
   },
   test: {

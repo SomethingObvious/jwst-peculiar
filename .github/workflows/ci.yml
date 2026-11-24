@@ -17,9 +17,10 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      # The CPU build of torch, as the tests use a small stand-in for DINO and the
-      # CUDA wheels are a couple of gigabytes.
-      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      # The CPU builds, as the tests use a small stand-in for DINO and the CUDA wheels
+      # are a couple of gigabytes. torchvision comes from the same index, since timm
+      # won't import with one built for another torch.
+      - run: pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
       - run: pip install -e ".[dev]"
       - run: ruff check jwst_peculiar tests
       - run: ruff format --check jwst_peculiar tests
@@ -42,7 +43,7 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
       - if: runner.os != 'macOS'
-        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+        run: pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
       # not editable, so a module left out of the package fails here
       - run: pip install . pytest
       - run: pytest -q

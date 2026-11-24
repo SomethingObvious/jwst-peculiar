@@ -87,6 +87,7 @@ Run `objects check` first, as it catches most of these before a long step does.
 - `the mosaics' units are ... rather than MJy/sr` means the `f_` and `e_` columns in `objects.csv` aren't in nJy. Nothing else changes, as the tests and rankings only use ratios and S/N, but every band needs the same units.
 - `cut short or empty, so its download probably stopped early` means a mosaic is smaller than its own header says. Download it again, as `curl -o` leaves whatever arrived before a dropped connection.
 - On a remote machine, run `view` with `--no-browser` and forward its port, with `ssh -L 8765:127.0.0.1:8765 host`, then open http://127.0.0.1:8765/ on your own. The viewer only listens on the machine it runs on.
+- `operator torchvision::nms does not exist` from `embed` means torch and torchvision came from different builds, usually torch from pytorch.org and torchvision from PyPI. Install both with the same `--index-url`.
 - `Port 8765 is taken` only means another viewer is open, and this one uses a free port instead.
 - `cut` needs memory for a whole field at once, about 31 bytes per pixel over all its bands. If a field doesn't fit, set `tile` to the size `check` suggests. Each field cut at the same time needs that much again, so if something else needs the memory, `--workers 1` cuts one field at a time.
 

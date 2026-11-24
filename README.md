@@ -18,7 +18,7 @@ python -m venv .venv
 pip install -e .
 ```
 
-It needs Python 3.11 or newer, and `pip install git+https://github.com/SomethingObvious/jwst-peculiar` installs it without a clone. On Windows pip installs the CPU build of PyTorch even when there is an NVIDIA GPU, so install the CUDA build from [pytorch.org](https://pytorch.org/get-started/locally/) first if you have one. `embed` ran 9 times faster on a laptop GPU than on its CPU. `jwst-peculiar objects check` says which device it will use.
+It needs Python 3.11 or newer, and `pip install git+https://github.com/SomethingObvious/jwst-peculiar` installs it without a clone. On Windows pip installs the CPU build of PyTorch even when there is an NVIDIA GPU, so install the CUDA builds of torch and torchvision from [pytorch.org](https://pytorch.org/get-started/locally/) first if you have one. `embed` ran 9 times faster on a laptop GPU than on its CPU. `jwst-peculiar objects check` says which device it will use.
 
 A YAML file says where a survey's mosaics are, and `objects init` writes one from the file names in a folder of them.
 

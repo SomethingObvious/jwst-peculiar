@@ -25,7 +25,7 @@ from jwst_peculiar.objects.compact import (
     one_pair,
     sharp,
 )
-from jwst_peculiar.objects.cut import Band, N, gaia_stars, photometry, render
+from jwst_peculiar.objects.cut import Band, N, detect, gaia_stars, photometry, render
 from jwst_peculiar.objects.flags import blobs, merged, on_spikes
 from jwst_peculiar.objects.init import guess, split_name
 from jwst_peculiar.objects.rank import (
@@ -417,3 +417,11 @@ def test_check_says_when_the_flux_columns_will_not_be_in_njy(
     )
     report(cfg)
     assert "units are 10*nJy, MJy/sr rather than MJy/sr" in capsys.readouterr().out
+
+
+def test_detection_splits_a_blend_and_remembers_its_parent() -> None:
+    sky = gaussian(90, 100, sigma=4, amp=80) + gaussian(104, 100, sigma=4, amp=60)
+    noise = np.random.default_rng(2).normal(0, 1, sky.shape).astype(np.float32)
+    seg, _ = detect(band(sky + noise))
+    assert len(seg) == 2
+    assert seg.parent.tolist()[0] == seg.parent.tolist()[1]

@@ -23,7 +23,9 @@ dependencies = [
   "tqdm",
   "matplotlib",
   "pyvo",  # SIMBAD, NED and Gaia over TAP for `jwst-peculiar match`
-  "photutils",  # finds and measures sources for the colour search
+  "photutils<4",  # finds and measures sources, and 4.0 drops progress_bar
+  "scikit-image",  # photutils before 3.1, all Python 3.11 gets, deblends with it
+  "requests",
   "scikit-learn",  # the isolation forest baseline in `jwst-peculiar bench`
   "typing_extensions",  # @override on Python 3.11
 ]

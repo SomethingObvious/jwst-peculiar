@@ -20,6 +20,7 @@ from jwst_peculiar.objects.check import report
 from jwst_peculiar.objects.compact import (
     BANDS,
     bad_pixel,
+    blue_star,
     dark_middle,
     near_edge,
     on_line,
@@ -642,4 +643,22 @@ def test_a_faint_red_candidate_is_not_flagged_for_its_own_f444w_peak() -> None:
         "red dot, peak at its centre": False,
         "red dot, peak 0.2 arcsec off": True,
         "blue galaxy, peak at its centre": True,
+    }
+
+
+def test_a_faint_star_is_flagged_and_a_brown_dwarf_is_not() -> None:
+    # 0.1" fluxes F115W to F444W in nJy, and F150W's 0.25" flux
+    rows = {
+        "star": ([40.0, 50.0, 15.0, 8.0], 60.0),
+        "brown dwarf": ([10.0, 20.0, 15.0, 90.0], 24.0),
+        "blue galaxy": ([40.0, 50.0, 15.0, 8.0], 150.0),
+    }
+    t = pd.DataFrame({
+        f"f_{b}_10": [v[0][i] for v in rows.values()] for i, b in enumerate(BANDS)
+    })
+    t["f_f150w_25"] = [v[1] for v in rows.values()]
+    assert dict(zip(rows, blue_star(t).tolist(), strict=True)) == {
+        "star": True,
+        "brown dwarf": False,
+        "blue galaxy": False,
     }

@@ -58,11 +58,12 @@ jwst-peculiar objects view survey.yaml --list sample.csv
 jwst-peculiar objects label survey.yaml
 jwst-peculiar objects compact survey.yaml -n 500
 jwst-peculiar objects view survey.yaml --list compact.csv
+jwst-peculiar objects view survey.yaml --export site/ --site_url https://example.org/demo/
 ```
 
 `cut` writes each field's objects to `fields/FIELD/objects.csv` with their aperture photometry in nJy and a `flag_*` column for every artefact test. A flagged object is left out of the ranking, and `flag_outshone`, a brighter neighbour in the stamp, only keeps it off the list. Each field is read into memory whole, which peaked at 2.4 GB for a 4,600 by 11,500 pixel COSMOS-Web tile.
 
-`rank` counts systems, so the stamps of one galaxy take one place between them. `like` takes object ids or `RA,DEC` in degrees and lists the objects most like them. `view` opens any of these lists in the viewer, where `1` to `4` work as they do for tiles and save to `verdicts.csv` in the run folder. Once there are at least 5 verdicts of each kind, `label` fits a classifier on them, and from then on `rank` multiplies rarity by its chance that an object is worth a look (`--image-only` turns that off). Interesting and known objects both count as worth a look, and a known object stays off later lists. The list alone teaches it what rare looks like but not what ordinary looks like, so label a `--sample` batch from places 101 to 2,000 now and then as well.
+`rank` counts systems, so the stamps of one galaxy take one place between them. `like` takes object ids or `RA,DEC` in degrees and lists the objects most like them. `view` opens any of these lists in the viewer, where `1` to `4` work as they do for tiles and save to `verdicts.csv` in the run folder. Once there are at least 5 verdicts of each kind, `label` fits a classifier on them, and from then on `rank` multiplies rarity by its chance that an object is worth a look (`--image-only` turns that off). Interesting and known objects both count as worth a look, and a known object stays off later lists. The list alone teaches it what rare looks like but not what ordinary looks like, so label a `--sample` batch from places 101 to 2,000 now and then as well. `view --export` writes a list as a static site instead, and `--site_url` adds its social card and sitemap for where it will be hosted.
 
 `compact` ranks the sources too small for a stamp, which is where little red dots and brown dwarfs end up. `cut` writes each field's candidates to `fields/FIELD/compact.csv` when the config has F115W, F150W, F277W and F444W: segments at S/N 10 or more with a semimajor axis of 0.12" or less or an area under 60 pixels, found in F277W or, where F277W has nothing, in F444W. Each has its own `flag_*` tests for cosmic rays, hot pixels, stars and their spikes. `compact` ranks the unflagged ones on how rare their colours and concentrations are, and writes a four-panel tile of each (colour and F115W on top, F277W and F444W below) so `view` can show them. It finds known little red dots very well, though about a third of its top 100 on COSMOS-Web development fields, and about half on a held-out block with a lot of short-wave striping, were still artefacts or stars, so expect to throw a fair number out.
 
@@ -98,7 +99,7 @@ Prep records what the headers say about each band in `mosaics/<id>.json`: the fi
 
 #### JWST Presets
 
-`--sensor miri` takes JWST i2d files or `*sci.fits` and `*wht.fits` pairs. `--sensor nircam` makes colour tiles from three NIRCam filters of one field, reprojecting them onto one grid and keeping a tile only where all three have data. This is how the demo was cut.
+`--sensor miri` takes JWST i2d files or `*sci.fits` and `*wht.fits` pairs. `--sensor nircam` makes colour tiles from three NIRCam filters of one field, reprojecting them onto one grid and keeping a tile only where all three have data. This is how the SMACS 0723 tiles in the benchmark were cut.
 
 ```
 jwst-peculiar prep --sensor nircam --indir rawfits/smacs0723 --out datasets/smacs_nircam \

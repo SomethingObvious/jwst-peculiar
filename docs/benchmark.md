@@ -1,6 +1,6 @@
 # Benchmark
 
-There is no labelled set of JWST anomalies to score against, so there are two checks. `jwst-peculiar bench` plants sources of known brightness in real tiles and measures where they land in the ranking, and `jwst-peculiar recall` measures how a run ranks objects already known to be in the field. Everything here is from the 288 SMACS 0723 tiles of the demo.
+There is no labelled set of JWST anomalies to score against, so there are two checks. `jwst-peculiar bench` plants sources of known brightness in real tiles and measures where they land in the ranking, and `jwst-peculiar recall` measures how a run ranks objects already known to be in the field. Everything here is from a patch search of the 288 SMACS 0723 tiles.
 
 ## What Is Planted
 

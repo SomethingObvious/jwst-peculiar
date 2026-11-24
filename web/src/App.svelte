@@ -800,6 +800,7 @@
           {frame}
           grid={bundle.run.grid}
           hasPass1={bundle.run.passes >= 2}
+          patches={bundle.run.detector !== 'objects'}
           bind:display
           {limits}
           {mapRange}
@@ -862,7 +863,7 @@
           <span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> Verdict</span>
           <span><kbd>s</kbd> Star</span>
           <span><kbd>n</kbd> Note</span>
-          <span><kbd>o</kbd> Overlay</span>
+          {#if bundle.run.detector !== 'objects'}<span><kbd>o</kbd> Overlay</span>{/if}
           <span><kbd>g</kbd> Rank</span>
           <button class="keys" onclick={() => sheet?.showModal()}
             ><kbd>?</kbd> All Keys</button

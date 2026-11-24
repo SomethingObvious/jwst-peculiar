@@ -16,6 +16,7 @@
     frame,
     grid,
     hasPass1,
+    patches,
     display = $bindable(),
     limits,
     mapRange,
@@ -33,6 +34,7 @@
     frame: TileFrame | null;
     grid: [number, number];
     hasPass1: boolean;
+    patches: boolean;
     display: Display;
     limits: Limits;
     mapRange: [number, number];
@@ -398,85 +400,87 @@
           : 'Run jwst-peculiar match to mark catalogued sources'}>Catalogues</button
       >
     </div>
-    <div class="group">
-      <button
-        class="ctl"
-        aria-pressed={display.overlay}
-        onclick={() => (display.overlay = !display.overlay)}
-        title="Patch-distance overlay (o)">Overlay</button
-      >
-      {#if hasPass1}
-        <div class="seg" role="group" aria-label="Map">
+    {#if patches}
+      <div class="group">
+        <button
+          class="ctl"
+          aria-pressed={display.overlay}
+          onclick={() => (display.overlay = !display.overlay)}
+          title="Patch-distance overlay (o)">Overlay</button
+        >
+        {#if hasPass1}
+          <div class="seg" role="group" aria-label="Map">
+            <button
+              class="ctl"
+              aria-pressed={display.source === 'pass2'}
+              onclick={() => (display.source = 'pass2')}>Pass 2</button
+            >
+            <button
+              class="ctl"
+              aria-pressed={display.source === 'pass1'}
+              onclick={() => (display.source = 'pass1')}>Pass 1</button
+            >
+            <button
+              class="ctl"
+              aria-pressed={display.source === 'diff'}
+              onclick={() => (display.source = 'diff')}
+              title="Pass 2 minus pass 1">Change</button
+            >
+          </div>
+        {/if}
+        <div class="seg" role="group" aria-label="Overlay style">
           <button
             class="ctl"
-            aria-pressed={display.source === 'pass2'}
-            onclick={() => (display.source = 'pass2')}>Pass 2</button
+            aria-pressed={!display.contours}
+            onclick={() => (display.contours = false)}>Patches</button
           >
           <button
             class="ctl"
-            aria-pressed={display.source === 'pass1'}
-            onclick={() => (display.source = 'pass1')}>Pass 1</button
-          >
-          <button
-            class="ctl"
-            aria-pressed={display.source === 'diff'}
-            onclick={() => (display.source = 'diff')}
-            title="Pass 2 minus pass 1">Change</button
+            aria-pressed={display.contours}
+            onclick={() => (display.contours = true)}>Contours</button
           >
         </div>
-      {/if}
-      <div class="seg" role="group" aria-label="Overlay style">
-        <button
-          class="ctl"
-          aria-pressed={!display.contours}
-          onclick={() => (display.contours = false)}>Patches</button
-        >
-        <button
-          class="ctl"
-          aria-pressed={display.contours}
-          onclick={() => (display.contours = true)}>Contours</button
-        >
       </div>
-    </div>
-    <div class="group sliders">
-      <label class="slider">
-        <span class="label">Opacity</span>
-        <input
-          type="range"
-          min="0"
-          max="1"
-          step="0.01"
-          bind:value={display.overlayOpacity}
-        />
-        <span class="num val">{pct(display.overlayOpacity)}</span>
-      </label>
-      <label class="slider">
-        <span class="label">Threshold</span>
-        <input
-          type="range"
-          min="0"
-          max="0.95"
-          step="0.01"
-          bind:value={display.threshold}
-        />
-        <span class="num val">{fmt(thresholdValue)}</span>
-      </label>
-      <label class="legend">
-        <span class="sr">Overlay colour map</span>
-        <select class="ctl" bind:value={display.overlayCmap}>
-          {#each CMAPS as c (c.id)}
-            <option value={c.id}>{c.label}</option>
-          {/each}
-        </select>
-        <span class="ramp">
-          <span class="num">{fmt(mapRange[0])}</span>
-          <i style:background={cssGradient(display.overlayCmap)}
-            ><b style:width="{display.threshold * 100}%"></b></i
-          >
-          <span class="num">{fmt(mapRange[1])}</span>
-        </span>
-      </label>
-    </div>
+      <div class="group sliders">
+        <label class="slider">
+          <span class="label">Opacity</span>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            bind:value={display.overlayOpacity}
+          />
+          <span class="num val">{pct(display.overlayOpacity)}</span>
+        </label>
+        <label class="slider">
+          <span class="label">Threshold</span>
+          <input
+            type="range"
+            min="0"
+            max="0.95"
+            step="0.01"
+            bind:value={display.threshold}
+          />
+          <span class="num val">{fmt(thresholdValue)}</span>
+        </label>
+        <label class="legend">
+          <span class="sr">Overlay colour map</span>
+          <select class="ctl" bind:value={display.overlayCmap}>
+            {#each CMAPS as c (c.id)}
+              <option value={c.id}>{c.label}</option>
+            {/each}
+          </select>
+          <span class="ramp">
+            <span class="num">{fmt(mapRange[0])}</span>
+            <i style:background={cssGradient(display.overlayCmap)}
+              ><b style:width="{display.threshold * 100}%"></b></i
+            >
+            <span class="num">{fmt(mapRange[1])}</span>
+          </span>
+        </label>
+      </div>
+    {/if}
   </div>
 
   <div class="stage">

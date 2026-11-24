@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-from jwst_peculiar.bundle import export, read_verdicts
+from jwst_peculiar.bundle import add_site_meta, export, read_verdicts
 from jwst_peculiar.objects.compact import STAMPS
 from jwst_peculiar.server import built_viewer, serve
 
@@ -192,6 +192,12 @@ def main(cfg: Config, argv: list[str]) -> int:
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--no-browser", dest="browser", action="store_false")
     p.add_argument("--export", type=Path, default=None, help="write a static site here")
+    p.add_argument(
+        "--site_url",
+        default=None,
+        help="with --export, where the site will be hosted, for its social card",
+    )
+    p.add_argument("--name", default=None, help="the list's name in the viewer")
     a = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     listing = cfg.out / a.list
@@ -200,8 +206,12 @@ def main(cfg: Config, argv: list[str]) -> int:
         raise SystemExit(msg)
     app = built_viewer()
     bundle = ObjectBundle(cfg, listing, writable=a.export is None)
+    if a.name:
+        bundle.index["run"]["name"] = a.name
     if a.export is not None:
         export(bundle, a.export, app)
+        if a.site_url:
+            add_site_meta(bundle, a.export, a.site_url)
     else:
         serve(bundle, port=a.port, browser=a.browser)
     return 0

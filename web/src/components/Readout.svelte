@@ -70,6 +70,9 @@
   });
   const mosaic = $derived(bundle.mosaics[tile.mosaic]);
   const grid = $derived(bundle.run.grid);
+  // An objects list has one stamp per tile and no patch map, so the patch rows mean nothing.
+  const patches = $derived(bundle.run.detector !== 'objects');
+  const restingTitle = $derived(patches ? 'Peak Patch' : 'Centre');
   const record = $derived(verdicts.map.get(tile.key));
 
   // With no pointer on the plate the readout follows the peak patch, so it is never empty.
@@ -414,7 +417,7 @@
 <aside class="readout" aria-label="Readout">
   <section class="block">
     {@render head(
-      probe?.live ? 'Cursor' : 'Peak Patch',
+      probe?.live ? 'Cursor' : restingTitle,
       probe?.live ? undefined : 'pointer off plate',
     )}
     {#if read}
@@ -451,20 +454,22 @@
           {/each}
           <span class="dim unit">{data?.bunit}</span>
         </dd>
-        <dt>Patch</dt>
-        <dd class="num">
-          r{read.pr} c{read.pc} <span class="gap"></span>
-          <b>{Number.isNaN(read.dist) ? 'no map' : read.dist.toFixed(4)}</b>
-          {#if read.dist1 !== null}<span class="sub"
-              >pass 1 {read.dist1.toFixed(4)}</span
-            >{/if}
-        </dd>
-        {#if !Number.isNaN(read.dist)}
-          <dt>Percentile</dt>
+        {#if patches}
+          <dt>Patch</dt>
           <dd class="num">
-            <span class="pbar"><i style:width="{read.pct}%"></i></span
-            >{read.pct.toFixed(1)} within tile
+            r{read.pr} c{read.pc} <span class="gap"></span>
+            <b>{Number.isNaN(read.dist) ? 'no map' : read.dist.toFixed(4)}</b>
+            {#if read.dist1 !== null}<span class="sub"
+                >pass 1 {read.dist1.toFixed(4)}</span
+              >{/if}
           </dd>
+          {#if !Number.isNaN(read.dist)}
+            <dt>Percentile</dt>
+            <dd class="num">
+              <span class="pbar"><i style:width="{read.pct}%"></i></span
+              >{read.pct.toFixed(1)} within tile
+            </dd>
+          {/if}
         {/if}
         {#if near}
           <dt>Source</dt>
@@ -526,10 +531,12 @@
           {:else}<span class="dim">No verdicts to learn from yet</span>{/if}
         </dd>
       {/if}
-      <dt>Reference</dt>
-      <dd>
-        {referenceNote}
-      </dd>
+      {#if patches}
+        <dt>Reference</dt>
+        <dd>
+          {referenceNote}
+        </dd>
+      {/if}
       <dt>Mosaic</dt>
       <dd class="name mosaic" title={tile.mosaic}>{tile.mosaic}</dd>
       <dt>Centre</dt>
@@ -543,25 +550,27 @@
         {tile.size} px <span class="gap"></span>
         {arcsec.toFixed(2)}&Prime;
       </dd>
-      <dt>Peak</dt>
-      <dd>
-        <span class="num"
-          ><svg
-            class="peakring"
-            width="14"
-            height="14"
-            viewBox="-7 -7 14 14"
-            aria-hidden="true"
-            ><circle r="3.5" /><path
-              d="M0 -6.5 V-5 M0 5 V6.5 M-6.5 0 H-5 M5 0 H6.5"
-            /></svg
-          >r{tile.peak[0]} c{tile.peak[1]}
-          <span class="dim">of {grid[0]} &times; {grid[1]}</span></span
-        >
-        <span class="dim small under"
-          >The patch furthest from the reference, ringed on the plate.</span
-        >
-      </dd>
+      {#if patches}
+        <dt>Peak</dt>
+        <dd>
+          <span class="num"
+            ><svg
+              class="peakring"
+              width="14"
+              height="14"
+              viewBox="-7 -7 14 14"
+              aria-hidden="true"
+              ><circle r="3.5" /><path
+                d="M0 -6.5 V-5 M0 5 V6.5 M-6.5 0 H-5 M5 0 H6.5"
+              /></svg
+            >r{tile.peak[0]} c{tile.peak[1]}
+            <span class="dim">of {grid[0]} &times; {grid[1]}</span></span
+          >
+          <span class="dim small under"
+            >The patch furthest from the reference, ringed on the plate.</span
+          >
+        </dd>
+      {/if}
       {#if tile.owned}
         {@const [r0, r1, c0, c1] = tile.owned}
         <dt>Scored</dt>

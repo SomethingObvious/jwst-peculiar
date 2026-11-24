@@ -11,7 +11,7 @@ from PIL import Image
 import pytest
 from sklearn.linear_model import LogisticRegression
 
-from jwst_peculiar.bundle import save_verdict
+from jwst_peculiar.bundle import add_site_meta, export, save_verdict
 from jwst_peculiar.objects import Config, read_config
 from jwst_peculiar.objects.compact import dark_middle, one_band, one_pair, sharp
 from jwst_peculiar.objects.cut import Band, N, render
@@ -225,3 +225,24 @@ def test_one_list_can_mix_stamped_and_compact_objects(tmp_path: Path) -> None:
     )
     assert (stamped[-1] == 255).all()
     assert (small == 77).all()
+
+
+def test_an_exported_list_gets_a_social_card(tmp_path: Path) -> None:
+    cfg = fake_run(tmp_path, 3)
+    Image.new("RGB", (200, 200), (40, 40, 40)).save(tmp_path / "fields/a/field.png")
+    offsets([0.0], [0.0]).assign(id=["a:1"], field="a", half=1.0).to_csv(
+        tmp_path / "rank.csv", index=False
+    )
+    site = tmp_path / "site"
+    bundle = ObjectBundle(cfg, tmp_path / "rank.csv", writable=False)
+    export(bundle, site)
+    (site / "index.html").write_text(
+        '<html><head><title>x</title><meta name="description" content="old" />\n'
+        "  </head></html>",
+        encoding="utf-8",
+    )
+    add_site_meta(bundle, site, "https://example.org/demo")
+    page = (site / "index.html").read_text(encoding="utf-8")
+    assert "The 1 oddest objects in test rank" in page
+    with Image.open(site / "social.png") as card:
+        assert card.size == (1200, 630)

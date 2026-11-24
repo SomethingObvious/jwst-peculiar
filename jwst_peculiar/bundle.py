@@ -12,6 +12,7 @@ import csv
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import html
+import io
 import json
 import math
 from pathlib import Path
@@ -713,7 +714,7 @@ def _head_tags(url: str, name: str, ld: dict[str, Any]) -> str:
     ])
 
 
-def add_site_meta(bundle: RunBundle, out_dir: Path, site_url: str) -> None:
+def add_site_meta(bundle: Served, out_dir: Path, site_url: str) -> None:
     """Make an exported run findable once it's hosted at `site_url`.
 
     It names the run in index.html's title and description for crawlers that don't
@@ -726,11 +727,18 @@ def add_site_meta(bundle: RunBundle, out_dir: Path, site_url: str) -> None:
     run = bundle.index["run"]
     tiles = bundle.index["tiles"]
     title = f"{run['name']} · jwst-peculiar"
-    desc = (
-        f"{len(tiles)} tiles of {run['name']} ranked by jwst-peculiar, unsupervised "
-        "anomaly detection for James Webb Space Telescope images. Step through them "
-        "with the float pixels, patch distances, RA and Dec."
-    )
+    if run["detector"] == "objects":
+        desc = (
+            f"The {len(tiles)} oddest objects in {run['name']} as ranked by "
+            "jwst-peculiar, which finds odd galaxies in James Webb Space Telescope "
+            "images. Step through their colour stamps with RA and Dec."
+        )
+    else:
+        desc = (
+            f"{len(tiles)} tiles of {run['name']} ranked by jwst-peculiar, "
+            "unsupervised anomaly detection for James Webb Space Telescope images. "
+            "Step through them with the float pixels, patch distances, RA and Dec."
+        )
     _social_card(bundle, out_dir / "social.png")
 
     page = (out_dir / "index.html").read_text(encoding="utf-8")
@@ -815,11 +823,11 @@ def _card_box(
     return left, upper, left + w, upper + h
 
 
-def _social_card(bundle: RunBundle, path: Path) -> None:
+def _social_card(bundle: Served, path: Path) -> None:
     """A 1200 by 630 crop of the top tile's mosaic preview, centred on that tile."""
     top = bundle.index["tiles"][0]
-    preview = bundle.data_root / "mosaics" / f"{top['mosaic']}.png"
-    with Image.open(preview) as src:
+    preview, _ = bundle.read(f"mosaics/{top['mosaic']}.png")
+    with Image.open(io.BytesIO(preview)) as src:
         im = src.convert("RGB")
         h_mosaic = bundle.index["mosaics"][top["mosaic"]]["shape"][0]
         box = _card_box(np.asarray(im.convert("L")) > 0, top, h_mosaic)

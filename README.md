@@ -1,8 +1,8 @@
 # jwst-peculiar
 
-[![The viewer on a tile of Webb's First Deep Field ranked 11th, with patch-distance contours around a lensed galaxy at redshift 6.27, catalogue markers on every known source and the cursor readout in RA, Dec and MJy/sr](.github/readme/viewer.jpg)](https://somethingobvious.github.io/jwst-peculiar/)
+[![The viewer on the 17th oddest object in Webb's First Deep Field, a clumpy galaxy at redshift 1.27, with the ranked list on the left and its RA, Dec and verdict buttons on the right](.github/readme/viewer.jpg)](https://somethingobvious.github.io/jwst-peculiar/)
 
-jwst-peculiar looks for odd objects in JWST NIRCam mosaics, like mergers, rings, little red dots and the strange things nobody has a name for. It finds every source in a field, drops the ones that are instrument artefacts, embeds a colour stamp of each with Zoobot and ranks them by how unlike every other object they look. Verdicts you give in its viewer train a small classifier that pushes big ordinary galaxies down the list. Sources too small for a stamp get a second list, ranked on their colours.
+jwst-peculiar looks for odd objects in JWST NIRCam mosaics, like mergers, rings, little red dots and the strange things nobody has a name for. It finds every source in a field, drops the ones that are instrument artefacts, embeds a colour stamp of each with Zoobot and ranks them by how unlike every other object they look. Verdicts you give in its viewer train a small classifier that pushes big ordinary galaxies down the list. Sources too small for a stamp get a second list, ranked on their colours. The [demo](https://somethingobvious.github.io/jwst-peculiar/) is its top 100 in Webb's First Deep Field.
 
 On 148 COSMOS-Web fields (185,811 stamps) it took 2 hours 10 minutes on a laptop CPU to cut and 27 minutes on an RTX 4070 laptop GPU to embed, or about 6 hours on the CPU alone.
 
@@ -44,7 +44,7 @@ A stamp needs S/N over 40 and a semimajor axis over 0.12", so anything smaller o
 
 ## The Patch Search
 
-The older search still works on any FITS image with a WCS, HST and Euclid included. It scores tiles by how far their DINOv3 patches sit from ordinary sky, which can catch diffuse light that source detection misses. The [demo](https://somethingobvious.github.io/jwst-peculiar/) is a run on Webb's First Deep Field, and [usage](docs/usage.md#the-patch-search) and [the method](docs/method.md) cover it.
+The older search still works on any FITS image with a WCS, HST and Euclid included. It scores tiles by how far their DINOv3 patches sit from ordinary sky, which can catch diffuse light that source detection misses. [Usage](docs/usage.md#the-patch-search) and [the method](docs/method.md) cover it.
 
 ## Tests
 

@@ -48,6 +48,7 @@ from jwst_peculiar.config import (
     memory_size,
     sky_wcs,
     split_tile,
+    to_mjy_sr,
     written,
 )
 from jwst_peculiar.flags import blobs, flags, grid, stamp_pixels
@@ -186,6 +187,9 @@ def read_band(path: Path, hdu: int | str, box: Box | None = None) -> Band:
         SystemExit: When the mosaic can't be read, usually as it's cut short.
     """
     raw, header = _read(path, hdu, box)
+    factor = to_mjy_sr(header) or 1.0
+    if factor != 1:
+        raw *= np.float32(factor)
     wcs = sky_wcs(header)
     off = ~np.isfinite(raw) | (raw == 0)
     z = np.where(off, 0, raw).astype(np.float32)

@@ -49,6 +49,7 @@ from jwst_peculiar.cut import (
     fitting_workers,
     gaia_stars,
     photometry,
+    read_band,
     render,
     wcs_record,
 )
@@ -454,12 +455,20 @@ def test_a_compact_candidate_near_a_mosaic_edge_is_flagged() -> None:
     assert near_edge(t, dict.fromkeys(BANDS, b)).tolist() == [True, False, True]
 
 
-def test_check_says_when_the_flux_columns_will_not_be_in_njy(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    "case",
+    [
+        ("10*nJy", "so each band is turned into MJy/sr with its own pixel size"),
+        ("electrons/s", "can't be turned into MJy/sr"),
+    ],
+)
+def test_check_says_what_it_does_with_the_units(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], case: tuple[str, str]
 ) -> None:
+    unit, said = case
     for b in ("f115w", "f150w", "f277w", "f444w"):
-        unit = "10*nJy" if b == "f444w" else "MJy/sr"
-        hdu = fits.ImageHDU(np.ones((4, 4), np.float32), fits.Header({"BUNIT": unit}))
+        head = fits.Header({"BUNIT": unit if b == "f444w" else "MJy/sr"})
+        hdu = fits.ImageHDU(np.ones((4, 4), np.float32), head)
         fits.HDUList([fits.PrimaryHDU(), hdu]).writeto(tmp_path / f"a_{b}.fits")
     cfg = Config(
         name="t",
@@ -468,7 +477,30 @@ def test_check_says_when_the_flux_columns_will_not_be_in_njy(
         device="cpu",
     )
     report(cfg)
-    assert "units are 10*nJy, MJy/sr rather than MJy/sr" in capsys.readouterr().out
+    assert said in capsys.readouterr().out
+
+
+def test_flux_per_pixel_gives_the_same_flux_on_any_pixel_size(tmp_path: Path) -> None:
+    # one galaxy of 1000 nJy, written in nJy per pixel at 0.02" and at 0.04"
+    total = []
+    for side in (0.02, 0.04):
+        n = round(4 / side)
+        y, x = np.mgrid[:n, :n]
+        sigma = 0.15 / side
+        img = np.exp(-((x - n / 2) ** 2 + (y - n / 2) ** 2) / (2 * sigma**2))
+        img = 1000 * img / img.sum()
+        w = WCS(naxis=2)
+        w.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+        w.wcs.crval = [RA0, DEC0]
+        w.wcs.crpix = [n / 2 + 1, n / 2 + 1]
+        w.wcs.cd = [[-side / 3600, 0], [0, side / 3600]]
+        head = w.to_header()
+        head["BUNIT"] = "nJy"
+        path = tmp_path / f"{side}.fits"
+        fits.PrimaryHDU(img.astype(np.float32), head).writeto(path)
+        b = read_band(path, 0)
+        total.append(float(b.raw.sum()) * b.scale**2)
+    assert total[0] == pytest.approx(total[1], rel=1e-4)
 
 
 def test_check_says_there_is_no_compact_list_without_f115w(

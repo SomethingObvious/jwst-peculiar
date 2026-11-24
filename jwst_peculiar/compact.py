@@ -57,7 +57,7 @@ from PIL import Image
 from scipy.spatial import cKDTree
 from scipy.special import logsumexp
 
-from jwst_peculiar.config import sky_wcs
+from jwst_peculiar.config import sky_wcs, to_mjy_sr
 from jwst_peculiar.flags import (
     DETECTED,
     MIN_BANDS,
@@ -484,14 +484,17 @@ def _stretch(a: Floats, scale: float) -> Floats:
     return np.asarray(np.clip(np.arcsinh(10 * a / scale) / np.arcsinh(10), 0, 1), float)
 
 
-def _panel(data: Any, wcs: Any, at: Any) -> Floats:  # noqa: ANN401 astropy has no types
+def _panel(hdu: tuple[Any, Any, float], at: Any) -> Floats:  # noqa: ANN401 astropy has no types
+    data, wcs, factor = hdu
     cut = Cutout2D(data, at, CUTOUT * u.arcsec, wcs=wcs, mode="partial", fill_value=0)
     a = np.nan_to_num(np.asarray(cut.data, np.float32))
+    if factor != 1:
+        a *= np.float32(factor)
     small = Image.fromarray(a - np.median(a))
     return np.asarray(small.resize((TILE, TILE), Image.Resampling.BILINEAR), float)
 
 
-def tile(hdus: dict[str, tuple[Any, Any]], ra: float, dec: float) -> Any:  # noqa: ANN401 a uint8 tile
+def tile(hdus: dict[str, tuple[Any, Any, float]], ra: float, dec: float) -> Any:  # noqa: ANN401 a uint8 tile
     """Cut a 2.4" four-panel tile, its first row lowest like the stamps.
 
     The F444W, F277W, F150W colour panel and F115W sit on top, F277W and F444W
@@ -502,7 +505,7 @@ def tile(hdus: dict[str, tuple[Any, Any]], ra: float, dec: float) -> Any:  # noq
         A (224, 224, 3) uint8 tile.
     """
     at = SkyCoord(ra * u.deg, dec * u.deg)
-    img = {b: _panel(*hdus[b], at) for b in BANDS}
+    img = {b: _panel(hdus[b], at) for b in BANDS}
     mid = slice(TILE // 2 - TILE // 12, TILE // 2 + TILE // 12)
     peak = {b: max(float(np.max(v[mid, mid])), 1e-6) for b, v in img.items()}
     top = max(peak["f150w"], peak["f277w"], peak["f444w"])
@@ -556,7 +559,11 @@ def stamps(cfg: Config, top: pd.DataFrame) -> Any:  # noqa: ANN401 uint8 tiles
         ]
         try:
             hdus = {
-                b: (h[cfg.hdu].data, sky_wcs(h[cfg.hdu].header))
+                b: (
+                    h[cfg.hdu].data,
+                    sky_wcs(h[cfg.hdu].header),
+                    to_mjy_sr(h[cfg.hdu].header) or 1.0,
+                )
                 for b, h in zip(BANDS, opened, strict=True)
             }
             for i in rows:

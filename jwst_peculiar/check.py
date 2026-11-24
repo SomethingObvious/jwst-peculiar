@@ -16,7 +16,7 @@ import warnings
 
 from astropy.io import fits
 
-from jwst_peculiar.config import BYTES_PER_PIXEL, memory_size
+from jwst_peculiar.config import BYTES_PER_PIXEL, memory_size, to_mjy_sr
 from jwst_peculiar.embed import resolve_device
 
 if TYPE_CHECKING:
@@ -44,15 +44,19 @@ def _fits_memory(cfg: Config, biggest: str, need: float) -> list[str]:
 
 
 def _units(cfg: Config, name: str) -> None:
-    units = {
-        str(fits.getheader(cfg.band_path(name, b), cfg.hdu).get("BUNIT", "not given"))
-        for b in cfg.bands
-    }
-    if units != {"MJy/sr"}:
-        # the ranking only uses ratios and S/N, so only the nJy columns are off
+    heads = [fits.getheader(cfg.band_path(name, b), cfg.hdu) for b in cfg.bands]
+    units = ", ".join(sorted({str(h.get("BUNIT", "not given")) for h in heads}))
+    factors = [to_mjy_sr(h) for h in heads]
+    if None in factors:
         print(  # noqa: T201 the command's report
-            f"the mosaics' units are {', '.join(sorted(units))} rather than MJy/sr,"
-            " so the f_ and e_ columns won't be in nJy, though the ranking is the same"
+            f"the mosaics' units are {units}, which can't be turned into MJy/sr, so"
+            " colours and the f_ and e_ columns are only right if every band has the"
+            " same unit and pixel size"
+        )
+    elif set(factors) != {1.0}:
+        print(  # noqa: T201 the command's report
+            f"the mosaics are in {units}, so each band is turned into MJy/sr with its"
+            " own pixel size"
         )
 
 

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeAlias
 import warnings
 
+from astropy import units as u
 from astropy.io import fits
 from astropy.wcs import WCS, FITSFixedWarning
 import numpy as np
@@ -78,6 +79,31 @@ def sky_wcs(header: Any) -> Any:  # noqa: ANN401 astropy has no types
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", FITSFixedWarning)
         return WCS(header).celestial
+
+
+def to_mjy_sr(header: Any) -> float | None:  # noqa: ANN401 astropy has no types
+    """Return what turns a mosaic's pixels into MJy/sr, going by its BUNIT.
+
+    Flux per pixel, which DJA's mosaics are in, is divided by the pixel's solid
+    angle, so bands on different pixel grids still give the right colours.
+
+    Returns:
+        The factor, or None for a unit it can't convert.
+    """
+    try:
+        unit = u.Unit(str(header.get("BUNIT", "MJy/sr")))
+    except (TypeError, ValueError):
+        return None
+    area = 1.0
+    if unit.is_equivalent(u.Jy):
+        # square degrees a pixel covers
+        area = float(abs(np.linalg.det(sky_wcs(header).pixel_scale_matrix)))
+        unit /= u.deg**2
+    if not unit.is_equivalent(u.MJy / u.sr):
+        return None
+    # astropy types the scale as possibly complex, though a unit's never is
+    scale: Any = unit.to(u.MJy / u.sr)
+    return float(scale) / area
 
 
 def _box(header: Any, ra: Any, dec: Any) -> Box:  # noqa: ANN401 astropy has no types

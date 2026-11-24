@@ -38,6 +38,21 @@ def load_encoder(size: str, device: torch.device) -> torch.nn.Module:
     except ImportError as err:
         msg = "objects embed needs timm: pip install timm"
         raise SystemExit(msg) from err
+    from huggingface_hub import constants, try_to_load_from_cache  # noqa: PLC0415 comes with timm
+
+    repo = ENCODERS[size].removeprefix("hf_hub:")
+
+    def have(name: str) -> bool:
+        return isinstance(try_to_load_from_cache(repo, name), str)
+
+    # Zoobot's encoders ship pytorch_model.bin, but timm looks for safetensors first
+    cached = have("config.json") and (
+        have("model.safetensors") or have("pytorch_model.bin")
+    )
+    # otherwise the hub checks for a newer copy first, and without internet that
+    # takes five retries a file before it falls back to the cache anyway
+    was = constants.HF_HUB_OFFLINE
+    constants.HF_HUB_OFFLINE = was or cached
     try:
         net: torch.nn.Module = timm.create_model(
             ENCODERS[size], pretrained=True, num_classes=0
@@ -48,6 +63,8 @@ def load_encoder(size: str, device: torch.device) -> torch.nn.Module:
             " the Hugging Face hub, so it needs the internet once."
         )
         raise SystemExit(msg) from err
+    finally:
+        constants.HF_HUB_OFFLINE = was
     return net.eval().to(device)
 
 
@@ -60,7 +77,8 @@ def embed(stamps: Any, net: torch.nn.Module, *, device: torch.device) -> Any:  #
     out = []
     with torch.inference_mode():
         for i in range(0, len(stamps), BATCH):
-            chunk = np.ascontiguousarray(stamps[i : i + BATCH])
+            # a copy, as the stamps are a read-only memory map
+            chunk = np.array(stamps[i : i + BATCH])
             x = torch.from_numpy(chunk).to(device).float().div(255).permute(0, 3, 1, 2)
             turns = [torch.rot90(x, k, (2, 3)) for k in range(4)]
             views = turns + [v.flip(3) for v in turns]

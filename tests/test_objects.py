@@ -694,3 +694,34 @@ def test_a_faint_star_is_flagged_and_a_brown_dwarf_is_not() -> None:
         "brown dwarf": False,
         "blue galaxy": False,
     }
+
+
+@pytest.mark.parametrize(
+    ("cached", "offline"),
+    [({"config.json", "pytorch_model.bin"}, True), ({"config.json"}, False)],
+)
+def test_cached_weights_load_without_asking_the_hub(
+    monkeypatch: pytest.MonkeyPatch, cached: set[str], *, offline: bool
+) -> None:
+    import huggingface_hub
+    from huggingface_hub import constants
+    import timm
+    import torch
+
+    from jwst_peculiar.objects.embed import load_encoder
+
+    seen = []
+
+    def create_model(*_: object, **__: object) -> torch.nn.Module:
+        seen.append(constants.HF_HUB_OFFLINE)
+        return torch.nn.Identity()
+
+    def from_cache(_: str, name: str) -> str | None:
+        return f"/cache/{name}" if name in cached else None
+
+    monkeypatch.setattr(huggingface_hub, "try_to_load_from_cache", from_cache)
+    monkeypatch.setattr(timm, "create_model", create_model)
+    monkeypatch.setattr(constants, "HF_HUB_OFFLINE", False)
+    load_encoder("nano", torch.device("cpu"))
+    assert seen == [offline]
+    assert constants.HF_HUB_OFFLINE is False

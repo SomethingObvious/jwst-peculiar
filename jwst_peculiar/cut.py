@@ -1,4 +1,4 @@
-"""`objects cut`: find the objects in each field, measure them and cut their stamps.
+"""`cut`: find the objects in each field, measure them and cut their stamps.
 
 Detection is on one band (F277W by default), with a 64-pixel background, a
 Gaussian of FWHM 2 pixels, sources at 1.5 sigma over 10 pixels, and deblending at
@@ -20,6 +20,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 import json
 import os
+import time
 from typing import TYPE_CHECKING, Any
 import warnings
 
@@ -35,26 +36,26 @@ from photutils.segmentation import SourceCatalog, deblend_sources, detect_source
 from PIL import Image
 import requests
 from scipy.ndimage import map_coordinates, maximum_filter
+from typing_extensions import override
 
-from jwst_peculiar.objects import (
+from jwst_peculiar import compact
+from jwst_peculiar.config import (
     BYTES_PER_PIXEL,
+    EMPTY,
     MESH,
-    compact,
     memory_size,
     sky_wcs,
+    split_tile,
     written,
 )
-from jwst_peculiar.objects.flags import blobs, flags, grid, stamp_pixels
-from jwst_peculiar.prep import asinh_to_uint8, wcs_record
-from jwst_peculiar.session import PatientSession
+from jwst_peculiar.flags import blobs, flags, grid, stamp_pixels
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     import numpy.typing as npt
 
-    from jwst_peculiar.objects import Box, Config
-    from jwst_peculiar.utils import FitsHDUList, SkyWcs
+    from jwst_peculiar.config import Box, Config, FitsHDUList, SkyWcs
 
     Floats = npt.NDArray[np.float64]
     Bools = npt.NDArray[np.bool_]
@@ -71,6 +72,70 @@ RADII = (0.1, 0.25)
 NJY_PER_MJY_SR_ARCSEC2 = 2.350443e-11 * 1e15
 FINE = grid(N)
 GAIA_TAP = "https://gea.esac.esa.int/tap-server/tap"
+# seconds Gaia may go quiet before cut gives up on it
+TIMEOUT_S = 60
+# seconds to wait before each new try, as Gaia turns away fields cut at once (HTTP 429)
+GAIA_WAITS = (10, 30, 90)
+
+
+class NoData(Exception):  # noqa: N818 it isn't an error for a tile off a mosaic's edge
+    """A field or tile with no sources to find."""
+
+
+class PatientSession(requests.Session):
+    """A session that gives up on a stalled server, which pyvo's own never does."""
+
+    @override
+    def request(
+        self, method: str, url: Any, *args: Any, **kwargs: Any
+    ) -> requests.Response:
+        # read when called, so a test can shorten it
+        kwargs.setdefault("timeout", TIMEOUT_S)
+        return super().request(method, url, *args, **kwargs)
+
+
+def asinh_to_uint8(
+    img: npt.NDArray[np.floating[Any]], lo: float, hi: float, *, asinh_q: float = 10.0
+) -> npt.NDArray[np.uint8]:
+    """Stretch flux to 8 bits through an asinh between fixed limits.
+
+    NaN, and the zero fill some mosaics use for the same thing, become the bottom of
+    the stretch.
+
+    Returns:
+        The stretched image.
+    """
+    flux = np.asarray(img, dtype=np.float32)
+    flux = np.where(np.isfinite(flux) & (flux != 0), flux, np.float32(0))
+    x = np.clip((flux - lo) / (hi - lo + 1e-12), 0.0, 1.0)
+    # rounded, as truncating would put the upper limit itself at 254
+    out: npt.NDArray[np.uint8] = np.rint(
+        255.0 * np.arcsinh(asinh_q * x) / np.arcsinh(asinh_q)
+    ).astype(np.uint8)
+    return out
+
+
+def wcs_record(wcs: SkyWcs) -> tuple[dict[str, Any], float]:
+    """Return a WCS as the header cards the viewer reads, and its pixel scale.
+
+    Returns:
+        The cards, and arcseconds per pixel.
+    """
+    cd = np.diag(wcs.wcs.cdelt) @ wcs.wcs.get_pc()
+    record = {
+        "CTYPE1": wcs.wcs.ctype[0],
+        "CTYPE2": wcs.wcs.ctype[1],
+        "CRPIX1": float(wcs.wcs.crpix[0]),
+        "CRPIX2": float(wcs.wcs.crpix[1]),
+        "CRVAL1": float(wcs.wcs.crval[0]),
+        "CRVAL2": float(wcs.wcs.crval[1]),
+        "CD1_1": float(cd[0, 0]),
+        "CD1_2": float(cd[0, 1]),
+        "CD2_1": float(cd[1, 0]),
+        "CD2_2": float(cd[1, 1]),
+    }
+    scale = np.sqrt(abs(np.linalg.det(cd))) * 3600
+    return record, round(float(scale), 5)
 
 
 @dataclass
@@ -121,12 +186,18 @@ def read_band(path: Path, hdu: int | str, box: Box | None = None) -> Band:
     wcs = sky_wcs(header)
     off = ~np.isfinite(raw) | (raw == 0)
     z = np.where(off, 0, raw).astype(np.float32)
-    bkg = Background2D(
-        z, MESH, filter_size=3, bkg_estimator=MedianBackground(), mask=off
-    )
-    data = np.where(off, np.nan, z - bkg.background).astype(np.float32)
     scale = float(np.sqrt(abs(np.linalg.det(wcs.pixel_scale_matrix))) * 3600)
     roll = float(header["PA_V3"]) if "PA_V3" in header else None
+    try:
+        bkg = Background2D(
+            z, MESH, filter_size=3, bkg_estimator=MedianBackground(), mask=off
+        )
+    except ValueError:
+        # too little of the box has data to fit a sky to, which happens at a tile's
+        # corner, so the band counts as having no data there
+        nan = np.full(raw.shape, np.nan, np.float32)
+        return Band(raw, nan, nan, wcs, scale, roll)
+    data = np.where(off, np.nan, z - bkg.background).astype(np.float32)
     return Band(raw, data, bkg.background_rms.astype(np.float32), wcs, scale, roll)
 
 
@@ -150,7 +221,7 @@ def detect(band: Band) -> tuple[pd.DataFrame, npt.NDArray[np.int32]]:
         One row per segment, and the deblended segmentation map.
 
     Raises:
-        SystemExit: When the band has no sources at all.
+        NoData: When the band has no sources at all.
     """
     off = np.isnan(band.data)
     det = np.nan_to_num(band.data)
@@ -163,7 +234,7 @@ def detect(band: Band) -> tuple[pd.DataFrame, npt.NDArray[np.int32]]:
     seg = detect_sources(smooth, 1.5 * band.rms, 10, mask=off)
     if seg is None:
         msg = "Found no sources at all in this field. Is the detect band right?"
-        raise SystemExit(msg)
+        raise NoData(msg)
     parent = seg.data.copy()
     seg = deblend_sources(smooth, seg, 10, n_levels=32, contrast=0.005, **QUIET)
     cat = SourceCatalog(det, seg, convolved_data=smooth, error=band.rms, mask=off)
@@ -343,31 +414,51 @@ def gaia_stars(cfg: Config, name: str, t: pd.DataFrame) -> pd.DataFrame:
     cache = cfg.out / "gaia" / f"{name}.csv"
     if cache.exists():
         return pd.read_csv(cache)
-    import pyvo  # noqa: PLC0415 only needed once per field
-
     box = [float(t.ra.min()) - 0.05, float(t.ra.max()) + 0.05]
     box += [float(t.dec.min()) - 0.05, float(t.dec.max()) + 0.05]
     where = f"ra BETWEEN {box[0]} AND {box[1]} AND dec BETWEEN {box[2]} AND {box[3]}"
     src, fields = "gaiadr3.gaia_source", ", ".join(cols)
     q = f"SELECT {fields} FROM {src} WHERE phot_g_mean_mag < 21 AND {where}"  # noqa: S608 only numbers go in
-    try:
-        got: pd.DataFrame = (
-            pyvo.dal
-            .TAPService(GAIA_TAP, session=PatientSession())
-            .run_sync(q)
-            .to_table()
-            .to_pandas()
-        )
-    except (pyvo.dal.DALAccessError, requests.RequestException) as err:
-        msg = f"Couldn't query Gaia for {name} ({err}). Set gaia: false to skip spikes."
-        raise SystemExit(msg) from err
+    got = _query_gaia(q, name)
     cache.parent.mkdir(parents=True, exist_ok=True)
     got.to_csv(cache, index=False)
     return got
 
 
+def _query_gaia(q: str, name: str) -> pd.DataFrame:
+    """Run a query on Gaia's archive, trying again after each of GAIA_WAITS.
+
+    Returns:
+        The rows.
+
+    Raises:
+        SystemExit: When the last try fails too.
+    """
+    import pyvo  # noqa: PLC0415 only needed once per field
+
+    tries = 0
+    while True:
+        try:
+            got: pd.DataFrame = (
+                pyvo.dal
+                .TAPService(GAIA_TAP, session=PatientSession())
+                .run_sync(q)
+                .to_table()
+                .to_pandas()
+            )
+        except (pyvo.dal.DALAccessError, requests.RequestException) as err:
+            if tries == len(GAIA_WAITS):
+                msg = f"Couldn't query Gaia for {name} ({err})."
+                msg += " Set gaia: false to skip spikes."
+                raise SystemExit(msg) from err
+            time.sleep(GAIA_WAITS[tries])
+            tries += 1
+        else:
+            return got
+
+
 def describe(out: Path, band: Band, filters: tuple[str, ...]) -> None:
-    """Write a preview of the field and field.json, which `objects view` shows."""
+    """Write a preview of the field and field.json, which `view` shows."""
     h, w = band.data.shape
     step = max(1, int(np.ceil(max(h, w) / 2048)))
     # top row first, so the preview is the right way up like the stamps in the viewer
@@ -523,9 +614,20 @@ def cut_field(cfg: Config, name: str, *, redo: bool = False) -> str:
 
     Returns:
         A line for the log.
+
+    Raises:
+        SystemExit: When a whole mosaic has no sources.
     """
-    m = measure(cfg, name)
     out = cfg.out / "fields" / name
+    try:
+        m = measure(cfg, name)
+    except NoData as err:
+        if split_tile(name)[1] is None:
+            msg = f"{name}: {err}"
+            raise SystemExit(msg) from err
+        out.mkdir(parents=True, exist_ok=True)
+        (out / EMPTY).touch()
+        return f"{name}: no sources, as the tile is off the mosaic's edge"
     out.mkdir(parents=True, exist_ok=True)
     lone = blobs(m.bands, cfg.bands)
     if redo or not (out / "stamps.npy").exists():
@@ -561,13 +663,13 @@ def main(cfg: Config, argv: list[str]) -> int:
     Returns:
         0.
     """
-    p = argparse.ArgumentParser(prog="jwst-peculiar objects cut CONFIG")
+    p = argparse.ArgumentParser(prog="jwst-peculiar cut CONFIG")
     p.add_argument("--redo", action="store_true", help="cut fields already cut again")
     p.add_argument(
         "--workers",
         type=int,
         default=0,
-        help="fields to cut at once, each needing the memory objects check gives,"
+        help="fields to cut at once, each needing the memory check gives,"
         " by default as many as fit in half this machine's memory",
     )
     a = p.parse_args(argv)
@@ -575,7 +677,11 @@ def main(cfg: Config, argv: list[str]) -> int:
     waiting = [
         name
         for name in cfg.field_names()
-        if a.redo or not all((cfg.out / "fields" / name / f).exists() for f in want)
+        if a.redo
+        or not (
+            (cfg.out / "fields" / name / EMPTY).exists()
+            or all((cfg.out / "fields" / name / f).exists() for f in want)
+        )
     ]
     workers = a.workers or fitting_workers(cfg, waiting)
     if workers <= 1:

@@ -1,4 +1,4 @@
-"""`objects embed`: Zoobot embeddings of every field's stamps.
+"""`embed`: Zoobot embeddings of every field's stamps.
 
 The encoder is Zoobot's ConvNeXt-nano, loaded through timm from its Apache-2.0
 weights on the Hugging Face hub. Each stamp is embedded in its four turns and their
@@ -14,17 +14,41 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import torch
 
-from jwst_peculiar.data import resolve_device
-from jwst_peculiar.objects import written
+from jwst_peculiar.config import written
 
 if TYPE_CHECKING:
-    from jwst_peculiar.objects import Config
+    from jwst_peculiar.config import Config
 
 BATCH = 32
 ENCODERS = {
     size: f"hf_hub:mwalmsley/zoobot-encoder-convnext_{size}"
     for size in ("nano", "small", "base")
 }
+
+
+def resolve_device(spec: str) -> torch.device:
+    """Find the device a --device value names, failing early when it isn't there.
+
+    Returns:
+        The device, with "auto" picking CUDA, then MPS, then the CPU.
+
+    Raises:
+        RuntimeError: If it names CUDA or MPS and torch can't see one.
+    """
+    if spec == "auto":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
+    device = torch.device(spec)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        msg = f"--device {spec} asks for CUDA, but torch can't see a CUDA device"
+        raise RuntimeError(msg)
+    if device.type == "mps" and not torch.backends.mps.is_available():
+        msg = f"--device {spec} asks for MPS, but it isn't available here"
+        raise RuntimeError(msg)
+    return device
 
 
 def load_encoder(size: str, device: torch.device) -> torch.nn.Module:
@@ -36,7 +60,7 @@ def load_encoder(size: str, device: torch.device) -> torch.nn.Module:
     try:
         import timm  # noqa: PLC0415 only embed needs it
     except ImportError as err:
-        msg = "objects embed needs timm: pip install timm"
+        msg = "embed needs timm: pip install timm"
         raise SystemExit(msg) from err
     from huggingface_hub import constants, try_to_load_from_cache  # noqa: PLC0415 comes with timm
 
@@ -76,7 +100,8 @@ def embed(stamps: Any, net: torch.nn.Module, *, device: torch.device) -> Any:  #
     """
     out = []
     with torch.inference_mode():
-        for i in range(0, len(stamps), BATCH):
+        # once even with no stamps, so a tile with no objects gets (0, d) rows
+        for i in range(0, max(len(stamps), 1), BATCH):
             # a copy, as the stamps are a read-only memory map
             chunk = np.array(stamps[i : i + BATCH])
             x = torch.from_numpy(chunk).to(device).float().div(255).permute(0, 3, 1, 2)
@@ -92,7 +117,7 @@ def main(cfg: Config, argv: list[str]) -> int:
     Returns:
         0.
     """
-    p = argparse.ArgumentParser(prog="jwst-peculiar objects embed CONFIG")
+    p = argparse.ArgumentParser(prog="jwst-peculiar embed CONFIG")
     p.add_argument("--encoder", choices=ENCODERS, default="nano")
     p.add_argument("--redo", action="store_true", help="embed fields already embedded")
     a = p.parse_args(argv)

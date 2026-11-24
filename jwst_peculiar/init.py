@@ -1,4 +1,4 @@
-"""`objects init FOLDER CONFIG`: write a config for a folder of NIRCam mosaics.
+"""`init FOLDER CONFIG`: write a config for a folder of NIRCam mosaics.
 
 It reads the filter out of each file name (the last `f` and three or four digits
 followed by w, m or n), takes what comes before it, less any `_nircam` or
@@ -21,7 +21,7 @@ import re
 from astropy.io import fits
 import yaml
 
-from jwst_peculiar.objects import BYTES_PER_PIXEL
+from jwst_peculiar.config import BYTES_PER_PIXEL
 
 BAND = re.compile(r"f(\d{3,4})[wmn]2?", re.IGNORECASE)
 COMPACT = ("f115w", "f150w", "f277w", "f444w")
@@ -189,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
     Raises:
         SystemExit: When the config already exists.
     """
-    p = argparse.ArgumentParser(prog="jwst-peculiar objects init FOLDER CONFIG")
+    p = argparse.ArgumentParser(prog="jwst-peculiar init FOLDER CONFIG")
     p.add_argument("folder", type=Path, help="the folder of mosaics")
     p.add_argument("config", type=Path, help="the config to write, beside the folder")
     a = p.parse_args(argv)
@@ -204,5 +204,5 @@ def main(argv: list[str] | None = None) -> int:
             a.folder.resolve() / str(keys["pattern"]).split("/", 1)[1]
         ).as_posix()
     a.config.write_text(yaml.safe_dump(keys, sort_keys=False), encoding="utf-8")
-    print(f"Wrote {a.config}. Run jwst-peculiar objects check {a.config} next.")  # noqa: T201 the command's result
+    print(f"Wrote {a.config}. Run jwst-peculiar check {a.config} next.")  # noqa: T201 the command's result
     return 0

@@ -18,9 +18,9 @@ python -m venv .venv
 pip install -e .
 ```
 
-It needs Python 3.11 or newer, and `pip install git+https://github.com/SomethingObvious/jwst-peculiar` installs it without a clone. On Windows pip installs the CPU build of PyTorch even when there is an NVIDIA GPU, so install the CUDA builds of torch and torchvision from [pytorch.org](https://pytorch.org/get-started/locally/) first if you have one. `embed` ran 9 times faster on a laptop GPU than on its CPU. `jwst-peculiar objects check` says which device it will use.
+It needs Python 3.11 or newer, and `pip install git+https://github.com/SomethingObvious/jwst-peculiar` installs it without a clone. On Windows pip installs the CPU build of PyTorch even when there is an NVIDIA GPU, so install the CUDA builds of torch and torchvision from [pytorch.org](https://pytorch.org/get-started/locally/) first if you have one. `embed` ran 9 times faster on a laptop GPU than on its CPU. `jwst-peculiar check` says which device it will use.
 
-A YAML file says where a survey's mosaics are, and `objects init` writes one from the file names in a folder of them.
+A YAML file says where a survey's mosaics are, and `init` writes one from the file names in a folder of them.
 
 ```yaml
 name: cosmos-web
@@ -30,10 +30,10 @@ bands: [f115w, f150w, f277w, f444w]
 ```
 
 ```
-jwst-peculiar objects init mosaics survey.yaml
-jwst-peculiar objects run survey.yaml
-jwst-peculiar objects view survey.yaml
-jwst-peculiar objects label survey.yaml
+jwst-peculiar init mosaics survey.yaml
+jwst-peculiar run survey.yaml
+jwst-peculiar view survey.yaml
+jwst-peculiar label survey.yaml
 ```
 
 `run` checks the config, then cuts, embeds and ranks, and lists the compact sources when the bands allow it. [Usage](https://github.com/SomethingObvious/jwst-peculiar/blob/main/docs/usage.md#objects) covers each step on its own and how to label well.
@@ -49,8 +49,8 @@ curl -L -o mosaics/jw02736-o001_t001_nircam_clear-f090w_i2d.fits "https://mast.s
 curl -L -o mosaics/jw02736-o001_t001_nircam_clear-f150w_i2d.fits "https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:JWST/product/jw02736-o001_t001_nircam_clear-f150w_i2d.fits"
 curl -L -o mosaics/jw02736-o001_t001_nircam_clear-f277w_i2d.fits "https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:JWST/product/jw02736-o001_t001_nircam_clear-f277w_i2d.fits"
 curl -L -o mosaics/jw02736-o001_t001_nircam_clear-f444w_i2d.fits "https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:JWST/product/jw02736-o001_t001_nircam_clear-f444w_i2d.fits"
-jwst-peculiar objects run smacs0723.yaml
-jwst-peculiar objects view smacs0723.yaml
+jwst-peculiar run smacs0723.yaml
+jwst-peculiar view smacs0723.yaml
 ```
 
 On a laptop `cut` took a minute and 3.7 GB of memory, and `embed` took 22 seconds on its GPU or 3.5 minutes on its CPU, after downloading the Zoobot weights the first time. `view` opens the list in your browser.
@@ -58,10 +58,6 @@ On a laptop `cut` took a minute and 3.7 GB of memory, and `embed` took 22 second
 ## What It Won't Do
 
 A stamp needs S/N over 40 and a semimajor axis over 0.12", so anything smaller only reaches the compact list, which needs all four bands. Rarity is relative to the fields you give it, so whatever is common there counts as ordinary, though `rank --reference` can add a bigger survey's objects to compare against. Nothing it lists is a discovery until someone has looked at the data.
-
-## The Patch Search
-
-The older search still works on any FITS image with a WCS, HST and Euclid included. It scores tiles by how far their DINOv3 patches sit from ordinary sky, which can catch diffuse light that source detection misses. [Usage](https://github.com/SomethingObvious/jwst-peculiar/blob/main/docs/usage.md#the-patch-search) and [the method](https://github.com/SomethingObvious/jwst-peculiar/blob/main/docs/method.md) cover it.
 
 ## Tests
 

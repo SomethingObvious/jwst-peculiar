@@ -1,6 +1,6 @@
 # Plan for the Object Pipeline
 
-The tile searches in [search.md](search.md) and [minerva.md](minerva.md) came back empty, and their top tiles were mostly spikes, trails and seams. The pipeline here works per object instead, and since step 6 it is the package's main search, run as `jwst-peculiar objects`.
+The tile searches in [search.md](https://github.com/SomethingObvious/jwst-peculiar/blob/f5469e1/docs/search.md) and [minerva.md](https://github.com/SomethingObvious/jwst-peculiar/blob/f5469e1/docs/minerva.md) came back empty, and their top tiles were mostly spikes, trails and seams. The pipeline here works per object instead, and since step 6 it is the package's search. The tile search was taken out in 0.9.0, which also dropped `objects` from the commands, so `jwst-peculiar objects run` below is `jwst-peculiar run` now.
 
 This fixes how every change to the object pipeline gets judged, written on 2026-11-22 before any change to the prototype was made. The prototype detects sources on F277W, cuts one 224 px stamp per object scaled to its own size and brightness (F277W, F150W and F115W as red, green and blue), and embeds it with Zoobot's convnext_nano, averaged over 8 turns and mirrors. Rarity is the cosine distance to the fifth nearest object that shares no sky with it.
 

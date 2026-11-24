@@ -1,8 +1,8 @@
-"""`objects view`: open a list of objects in the web viewer, to judge and label them.
+"""`view`: open a list of objects in the web viewer, to judge and label them.
 
 Each object shows as a tile, its stamp the tile's picture and its field the mosaic,
 so verdicts work as they do for tiles and save to verdicts.csv in the run folder.
-`objects label` learns from them. A row with a `tile` takes its picture from the
+`label` learns from them. A row with a `tile` takes its picture from the
 compact list's tiles, as compact candidates have no stamp in their field, so one
 list can mix both.
 """
@@ -12,10 +12,13 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import html
 import io
 import json
 import logging
 from pathlib import Path
+import re
+import shutil
 from typing import TYPE_CHECKING, Any
 
 from astropy.wcs import WCS
@@ -23,14 +26,16 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-from jwst_peculiar.bundle import add_site_meta, export, read_verdicts
-from jwst_peculiar.objects.compact import STAMPS
+from jwst_peculiar.compact import STAMPS
 from jwst_peculiar.server import built_viewer, serve
+from jwst_peculiar.verdicts import read_verdicts
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from jwst_peculiar.objects import Config
+    import numpy.typing as npt
+
+    from jwst_peculiar.config import Config
 
 _BLANK_MAP = np.zeros(1, "<f4").tobytes()
 
@@ -174,6 +179,187 @@ class ObjectBundle:
             yield f"mosaics/{f}.png"
 
 
+def export(bundle: ObjectBundle, out_dir: Path, app_dir: Path | None = None) -> int:
+    """Write the list under out_dir/run/, with the viewer app beside it when given.
+
+    Returns:
+        How many files were written.
+
+    Raises:
+        SystemExit: If out_dir holds anything but an earlier export.
+    """
+    out_dir = Path(out_dir)
+    run_out = out_dir / "run"
+    if (
+        out_dir.is_dir()
+        and any(out_dir.iterdir())
+        and not (run_out / "index.json").is_file()
+    ):
+        msg = (
+            f"{out_dir} isn't empty and isn't an earlier export, so nothing was "
+            "written. Pick a new folder."
+        )
+        raise SystemExit(msg)
+    if run_out.exists():
+        shutil.rmtree(run_out)
+    if app_dir is not None:
+        shutil.copytree(app_dir, out_dir, dirs_exist_ok=True)
+    bundle.index["writable"] = False
+    n = 0
+    for path in bundle.paths():
+        data, _ = bundle.read(path)
+        dest = run_out / path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
+        n += 1
+    # GitHub Pages runs Jekyll otherwise, which is slow on a thousand files and does
+    # nothing here.
+    (out_dir / ".nojekyll").touch()
+    return n
+
+
+def add_site_meta(bundle: ObjectBundle, out_dir: Path, site_url: str) -> None:
+    """Make an exported list findable once it's hosted at `site_url`.
+
+    It names the list in index.html's title and description for crawlers that don't
+    run scripts, adds the canonical URL, JSON-LD and a social card cut from the field
+    around the top object, and writes a sitemap.xml. There is no robots.txt, as one
+    does nothing below the domain's root.
+    """
+    out_dir = Path(out_dir)
+    url = site_url.rstrip("/") + "/"
+    run = bundle.index["run"]
+    title = f"{run['name']} \u00b7 jwst-peculiar"
+    desc = (
+        f"The {len(bundle.index['tiles'])} oddest objects in {run['name']} as ranked "
+        "by jwst-peculiar, which finds odd galaxies in James Webb Space Telescope "
+        "images. Step through their colour stamps with RA and Dec."
+    )
+    _social_card(bundle, out_dir / "social.png")
+    page = (out_dir / "index.html").read_text(encoding="utf-8")
+    page = re.sub(
+        r"<title>.*?</title>",
+        lambda _: f"<title>{html.escape(title)}</title>",
+        page,
+        count=1,
+    )
+    for attr, value in (
+        ('name="description"', desc),
+        ('property="og:title"', title),
+        ('property="og:description"', desc),
+    ):
+        page = _set_meta(page, attr, value)
+    ld = {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": title,
+        "url": url,
+        "description": desc,
+        "applicationCategory": "Science",
+        "operatingSystem": "Any browser with WebGL2",
+        "isAccessibleForFree": True,
+        "image": url + "social.png",
+    }
+    page = page.replace("  </head>", _head_tags(url, run["name"], ld), 1)
+    (out_dir / "index.html").write_text(page, encoding="utf-8")
+    (out_dir / "sitemap.xml").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        f"  <url><loc>{html.escape(url)}</loc>"
+        f"<lastmod>{run['created'][:10]}</lastmod></url>\n"
+        "</urlset>\n",
+        encoding="utf-8",
+    )
+
+
+def _set_meta(page: str, attr: str, value: str) -> str:
+    escaped = html.escape(value)
+    return re.sub(
+        # Across lines too, as the built page wraps its longer tags.
+        rf'(<meta\s+{attr}\s+content=")[^"]*(")',
+        lambda m: m.group(1) + escaped + m.group(2),
+        page,
+        count=1,
+    )
+
+
+def _head_tags(url: str, name: str, ld: dict[str, Any]) -> str:
+    url = html.escape(url)
+    # A name holding </script> would otherwise end the block early.
+    data = json.dumps(ld).replace("</", "<\\/")
+    return "\n".join([
+        f'    <link rel="canonical" href="{url}" />',
+        f'    <meta property="og:url" content="{url}" />',
+        f'    <meta property="og:image" content="{url}social.png" />',
+        '    <meta property="og:image:width" content="1200" />',
+        '    <meta property="og:image:height" content="630" />',
+        f'    <meta property="og:image:alt" content="{html.escape(name)}" />',
+        f'    <meta name="twitter:image" content="{url}social.png" />',
+        f'    <script type="application/ld+json">{data}</script>',
+        "  </head>",
+    ])
+
+
+def _social_card(bundle: ObjectBundle, path: Path) -> None:
+    """Save a 1200 by 630 crop of the top object's field preview, centred on it."""
+    top = bundle.index["tiles"][0]
+    preview, _ = bundle.read(f"mosaics/{top['mosaic']}.png")
+    with Image.open(io.BytesIO(preview)) as src:
+        im = src.convert("RGB")
+        box = _card_box(
+            np.asarray(im.convert("L")) > 0,
+            top,
+            bundle.index["mosaics"][top["mosaic"]]["shape"][0],
+        )
+        card = im.crop(box).resize((1200, 630), Image.Resampling.LANCZOS)
+    card.save(path, optimize=True)
+
+
+def _card_box(
+    lit: npt.NDArray[np.bool_], top: dict[str, Any], h_field: int
+) -> tuple[int, int, int, int]:
+    height, width = lit.shape
+    scale = height / h_field
+    cx = (top["x0"] + top["size"] / 2) * scale
+    cy = (h_field - top["y0"] - top["size"] / 2) * scale
+    # Half the field's height keeps the card on the field, clear of gaps between
+    # detectors, and still shows plenty of sky around the object.
+    h = min(height // 2, round(width * 630 / 1200))
+    w = round(h * 1200 / 630)
+    # Kept off blank columns and rows, like the gap between NIRCam's modules.
+    left = _card_start(lit.mean(axis=0), cx, w)
+    upper = _card_start(lit.mean(axis=1), cy, h)
+    return left, upper, left + w, upper + h
+
+
+def _card_start(lit: npt.NDArray[np.floating[Any]], centre: float, length: int) -> int:
+    lo, hi = lit_span(lit, centre, length)
+    return int(min(max(centre - length / 2, lo), hi - length))
+
+
+def lit_span(
+    lit: npt.NDArray[np.floating[Any]], centre: float, length: int
+) -> tuple[int, int]:
+    """Find the run of indices around `centre` that is lit, 5 at a time.
+
+    Lit means at least a quarter as bright as the median.
+
+    Returns:
+        The run's start and end, or the whole axis when that run is shorter than
+        `length`.
+    """
+    good = np.convolve(lit, np.ones(5) / 5, mode="same") >= 0.25 * np.median(lit)
+    i = min(max(int(centre), 0), len(lit) - 1)
+    if not good[i]:
+        return 0, len(lit)
+    start, end = i, i + 1
+    while start > 0 and good[start - 1]:
+        start -= 1
+    while end < len(lit) and good[end]:
+        end += 1
+    return (start, end) if end - start >= length else (0, len(lit))
+
+
 def main(cfg: Config, argv: list[str]) -> int:
     """Serve a list in the viewer, or export it as a static site.
 
@@ -183,7 +369,7 @@ def main(cfg: Config, argv: list[str]) -> int:
     Raises:
         SystemExit: When the list hasn't been written yet.
     """
-    p = argparse.ArgumentParser(prog="jwst-peculiar objects view CONFIG")
+    p = argparse.ArgumentParser(prog="jwst-peculiar view CONFIG")
     p.add_argument(
         "--list",
         default="rank.csv",
@@ -202,7 +388,9 @@ def main(cfg: Config, argv: list[str]) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     listing = cfg.out / a.list
     if not listing.is_file():
-        msg = f"There's no {listing} yet. Run objects rank, like or compact first."
+        msg = (
+            f"There's no {listing} yet. Run jwst-peculiar rank, like or compact first."
+        )
         raise SystemExit(msg)
     app = built_viewer()
     bundle = ObjectBundle(cfg, listing, writable=a.export is None)

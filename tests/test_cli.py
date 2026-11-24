@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import io
-from typing import TYPE_CHECKING
+
+import pytest
 
 from jwst_peculiar import cli
-
-if TYPE_CHECKING:
-    import pytest
 
 
 def test_a_path_the_output_cannot_encode_prints_escaped_not_crashing(
@@ -16,7 +14,8 @@ def test_a_path_the_output_cannot_encode_prints_escaped_not_crashing(
 ) -> None:
     out = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
     monkeypatch.setattr("sys.stdout", out)
-    assert cli.main(["--version"]) == 0
+    with pytest.raises(SystemExit, match="0"):
+        cli.main(["--version"])
     print("list in C:\\日本\\rank.csv")  # noqa: T201 the print being tested
     out.flush()
     said = out.buffer.getvalue()

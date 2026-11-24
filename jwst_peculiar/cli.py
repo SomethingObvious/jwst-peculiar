@@ -1,114 +1,136 @@
-"""The `jwst-peculiar` command, with one subcommand per step.
+"""The `jwst-peculiar` command, one step of the object search at a time.
 
-Each subcommand's module is imported only when it runs, so `jwst-peculiar --help`
-doesn't wait for torch to load.
+`cut` detects objects in each field and cuts their stamps, `embed` turns the stamps
+into Zoobot embeddings, `rank` writes the rarity list, `like` finds the objects most
+like a seed, `view` opens a list in the web viewer to judge, and `label` picks a
+sample to judge, whose verdicts train the classifier `rank` weights rarity by.
+`compact` ranks the small sources `cut` leaves without a stamp on their colours,
+`init` writes a config for a folder of mosaics, and `check` says what a config finds
+before any of that runs.
+
+Each step's module is imported only when it runs, so `--help` doesn't wait for torch.
 """
 
 from __future__ import annotations
 
-import importlib
+import argparse
+from importlib import import_module
 from importlib.metadata import version
 import io
+from pathlib import Path
 import sys
+from typing import TYPE_CHECKING
 
-COMMANDS = {
-    "prep": (
-        "jwst_peculiar.prep",
-        "run",
-        "Cut FITS mosaics into tiles and FITS cutouts.",
-    ),
-    "levels": (
-        "jwst_peculiar.prep",
-        "levels_main",
-        "Measure one stretch per filter over datasets already cut.",
-    ),
-    "run": (
-        "jwst_peculiar.bootstrap",
-        "main",
-        "Rank every tile with no labels, in two passes.",
-    ),
-    "score": (
-        "jwst_peculiar.reference",
-        "main",
-        "Score tiles against tiles known to be normal.",
-    ),
-    "match": (
-        "jwst_peculiar.catalogues",
-        "main",
-        "Cross-match the candidates with catalogues.",
-    ),
-    "candidates": (
-        "jwst_peculiar.candidates",
-        "main",
-        "Write the candidates as a table and regions.",
-    ),
-    "view": (
-        "jwst_peculiar.server",
-        "main",
-        "Open a run in the viewer, or export it as a site.",
-    ),
-    "bench": (
-        "jwst_peculiar.benchmark",
-        "main",
-        "Plant sources and measure how many are found.",
-    ),
-    "recall": (
-        "jwst_peculiar.recall",
-        "main",
-        "Rank objects already known to be in the field.",
-    ),
-    "objects": (
-        "jwst_peculiar.objects",
-        "main",
-        "Find odd objects: check, cut, embed, rank, like, view and label.",
-    ),
-    "unzip": (
-        "jwst_peculiar.unzip",
-        "main",
-        "Expand .gz mosaics so they can be memory-mapped.",
-    ),
-}
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from jwst_peculiar.config import Config
+
+STEPS = (
+    "init",
+    "unzip",
+    "check",
+    "run",
+    "cut",
+    "embed",
+    "rank",
+    "like",
+    "label",
+    "view",
+    "compact",
+)
+STEP_HELP = """steps:
+  init     write a config from a folder of mosaics (give the folder for CONFIG)
+  unzip    expand the .gz mosaics in a folder (give the folder for CONFIG)
+  check    say what the config finds and anything wrong with it
+  run      check, cut, embed, rank and compact in turn
+  cut      find sources, flag artefacts and cut stamps
+  embed    Zoobot embeddings of the stamps, on the GPU if there is one
+  rank     the rarity list, with the label model once there are verdicts
+  like     the objects that look most like ones you give
+  label    a random sample to give verdicts on in the viewer
+  view     open a list in the browser
+  compact  the list of sources too small for a stamp
+
+jwst-peculiar STEP CONFIG --help shows a step's own options."""
 
 
-def usage() -> str:
-    """Return the top-level help, with one line per command."""
-    width = max(map(len, COMMANDS))
-    lines = [f"  {name:<{width}}  {help_}" for name, (_, _, help_) in COMMANDS.items()]
-    return (
-        "usage: jwst-peculiar COMMAND [options]\n\n"
-        "Unsupervised anomaly detection for JWST images.\n\ncommands:\n"
-        + "\n".join(lines)
-        + "\n\nRun `jwst-peculiar COMMAND -h` for a command's options."
-    )
+def run(cfg: Config, rest: list[str]) -> int:
+    """Check, cut, embed, rank and list compact sources, stopping at a failed step.
+
+    Returns:
+        The first nonzero exit code, or 0.
+    """
+    from jwst_peculiar import compact  # noqa: PLC0415 these load torch and scikit-learn
+    from jwst_peculiar.check import main as check  # noqa: PLC0415 as above
+    from jwst_peculiar.cut import main as cut  # noqa: PLC0415 as above
+    from jwst_peculiar.embed import main as embed  # noqa: PLC0415 as above
+    from jwst_peculiar.rank import main as rank  # noqa: PLC0415 as above
+
+    steps = [(check, []), (cut, rest), (embed, []), (rank, ["rank"])]
+    if compact.has_bands(cfg):
+        steps.append((compact.main, []))
+    for step, args in steps:
+        code = step(cfg, args)
+        if code:
+            return code
+    return 0
+
+
+def _step(step: str, config: Path, rest: list[str]) -> int:
+    if step in {"init", "unzip"}:
+        # these take a folder rather than a config
+        folder_step: Callable[[list[str]], int] = import_module(
+            f"jwst_peculiar.{step}"
+        ).main
+        return folder_step([str(config), *rest])
+    from jwst_peculiar.config import Config, read_config  # noqa: PLC0415 loads astropy
+
+    asks = {"-h", "--help"} & set(rest)
+    # a step's options can be looked up before there's a config to give it
+    cfg = Config("help", Path(), "{field}_{band}") if asks else read_config(config)
+    if step == "run" and not asks:
+        return run(cfg, rest)
+    # run's own help is cut's, as run passes its options to cut
+    module = {"run": "cut", "like": "rank", "label": "rank"}.get(step, step)
+    func: Callable[[Config, list[str]], int] = import_module(
+        f"jwst_peculiar.{module}"
+    ).main
+    # rank, like and label share a module that takes the step as its first argument
+    return func(cfg, [step, *rest] if module == "rank" else rest)
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the subcommand named in `argv`.
+    """Run one step of the object search.
 
     Returns:
-        The subcommand's exit code, or 2 when there's no such command.
+        The step's exit code.
     """
-    argv = sys.argv[1:] if argv is None else argv
     # Piped output on Windows uses the ANSI code page, so printing a path with
     # other letters in it would crash. This escapes them the way stderr does.
     if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(errors="backslashreplace")
-    if not argv or argv[0] in ("-h", "--help", "--version"):
-        asked = argv[:1] == ["--version"]
-        said = f"jwst-peculiar {version('jwst-peculiar')}" if asked else usage()
-        sys.stdout.write(said + "\n")
-        return 0
-    if argv[0] not in COMMANDS:
-        sys.stderr.write(
-            f"jwst-peculiar: there's no {argv[0]!r} command.\n\n{usage()}\n"
-        )
-        return 2
-    module, func, _ = COMMANDS[argv[0]]
-    # argparse names the program after argv[0], and this makes its usage line say
-    # `jwst-peculiar prep` rather than just `jwst-peculiar`.
-    sys.argv[0] = f"jwst-peculiar {argv[0]}"
+    p = argparse.ArgumentParser(
+        prog="jwst-peculiar",
+        description="Find odd objects in JWST NIRCam mosaics.",
+        epilog=STEP_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument(
+        "--version",
+        action="version",
+        version=f"jwst-peculiar {version('jwst-peculiar')}",
+    )
+    p.add_argument("step", choices=STEPS)
+    p.add_argument(
+        "config",
+        type=Path,
+        help="the survey's YAML config, or for init and unzip its folder",
+    )
+    p.add_argument("rest", nargs=argparse.REMAINDER, help="the step's own options")
+    a = p.parse_args(argv)
     try:
-        return getattr(importlib.import_module(module), func)(argv[1:]) or 0
+        return _step(a.step, a.config, a.rest)
     except KeyboardInterrupt:
         # every step writes its outputs whole, so a rerun picks up where this left off
         sys.stderr.write("jwst-peculiar: stopped.\n")

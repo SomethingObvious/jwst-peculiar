@@ -1,4 +1,4 @@
-"""`objects rank`, `like` and `label`: rarity, search by example and the label model.
+"""`rank`, `like` and `label`: rarity, search by example and the label model.
 
 An object's rarity is one minus the cosine similarity to its fifth nearest object
 that shares no sky with it, so the other crops of one galaxy never vouch for each
@@ -22,12 +22,13 @@ import numpy as np
 import pandas as pd
 from scipy.spatial import cKDTree
 
-from jwst_peculiar.bundle import read_verdicts
+from jwst_peculiar.config import read_config
+from jwst_peculiar.verdicts import read_verdicts
 
 if TYPE_CHECKING:
     import numpy.typing as npt
 
-    from jwst_peculiar.objects import Config
+    from jwst_peculiar.config import Config
 
     Floats = npt.NDArray[np.float64]
 
@@ -78,10 +79,17 @@ def load(cfg: Config, encoder: str = "nano") -> Objects:
     for field in cfg.cut_fields():
         folder = cfg.out / "fields" / field
         if not (folder / name).exists():
-            msg = f"{field} has no {name}. Run objects embed first."
+            msg = f"{field} has no {name}. Run jwst-peculiar embed first."
             raise SystemExit(msg)
-        cats.append(pd.read_csv(folder / "objects.csv"))
-        embs.append(np.load(folder / name))
+        cat = pd.read_csv(folder / "objects.csv")
+        # a tile with no objects reads back untyped, which would turn every column
+        # into Python objects
+        if len(cat):
+            cats.append(cat)
+            embs.append(np.load(folder / name))
+    if not cats:
+        msg = "No field has any objects."
+        raise SystemExit(msg)
     t = pd.concat(cats, ignore_index=True)
     t["id"] = t.field + ":" + t.label.astype(str)
     return Objects(t, np.concatenate(embs).astype(np.float32))
@@ -276,7 +284,7 @@ def rank_main(cfg: Config, argv: list[str]) -> int:
     Returns:
         0.
     """
-    p = argparse.ArgumentParser(prog="jwst-peculiar objects rank CONFIG")
+    p = argparse.ArgumentParser(prog="jwst-peculiar rank CONFIG")
     p.add_argument("-n", type=int, default=500, help="how many systems to list")
     p.add_argument(
         "--image-only", action="store_true", help="plain rarity, no label model"
@@ -295,8 +303,6 @@ def rank_main(cfg: Config, argv: list[str]) -> int:
     obj = load(cfg)
     ref = None
     if a.reference:
-        from jwst_peculiar.objects import read_config  # noqa: PLC0415 objects imports this module's steps
-
         ref = reference(obj, load(read_config(a.reference)))
         print(f"{len(ref)} reference objects")  # noqa: T201 the command's progress
     rar, weighted = scores(cfg, obj, ref)
@@ -333,7 +339,7 @@ def like_main(cfg: Config, argv: list[str]) -> int:
     Returns:
         0.
     """
-    p = argparse.ArgumentParser(prog="jwst-peculiar objects like CONFIG")
+    p = argparse.ArgumentParser(prog="jwst-peculiar like CONFIG")
     p.add_argument("seeds", nargs="+", help="FIELD:LABEL ids, or RA,DEC in degrees")
     p.add_argument("-n", type=int, default=100)
     a = p.parse_args(argv)
@@ -359,7 +365,7 @@ def label_main(cfg: Config, argv: list[str]) -> int:
     Raises:
         SystemExit: When there are too few labels of each kind to fit on.
     """
-    p = argparse.ArgumentParser(prog="jwst-peculiar objects label CONFIG")
+    p = argparse.ArgumentParser(prog="jwst-peculiar label CONFIG")
     p.parse_args(argv)
     obj = load(cfg)
     lab = read_labels(cfg)

@@ -1,12 +1,4 @@
-"""`jwst-peculiar objects`, the per-object search, driven by one YAML config.
-
-`cut` detects objects in each field and cuts their stamps, `embed` turns the stamps
-into Zoobot embeddings, `rank` writes the rarity list, `like` finds the objects most
-like a seed, `view` opens a list in the web viewer to judge, and `label`
-trains the classifier `rank` weights rarity by on the verdicts given there.
-`compact` ranks the small sources `cut` leaves without a stamp on their colours,
-`init` writes a config for a folder of mosaics, and `check` says what a config finds
-before any of that runs.
+"""A survey's YAML config, and what the steps share about fields and tiles.
 
 With `tile` set, each mosaic is cut in squares that many detection-band pixels on a
 side, named `FIELD~ROW-COL`. Each is read with a margin of `OVERLAP` arcsec so an
@@ -15,7 +7,6 @@ object near its edge is whole, and keeps only the objects centred in its own squ
 
 from __future__ import annotations
 
-import argparse
 from contextlib import contextmanager
 from dataclasses import dataclass
 import difflib
@@ -23,7 +14,7 @@ import glob
 import math
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias
 import warnings
 
 from astropy.io import fits
@@ -34,25 +25,19 @@ import yaml
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-STEPS = (
-    "init",
-    "check",
-    "run",
-    "cut",
-    "embed",
-    "rank",
-    "like",
-    "label",
-    "view",
-    "compact",
-)
 TILE_MARK = "~"
+# written in place of a tile's outputs when the tile has no sources, off a mosaic's edge
+EMPTY = "empty"
 OVERLAP = 12.0
 # the box size cut measures the sky background in
 MESH = 64
 # cut committed 3.7 GB at its peak on SMACS 0723, whose four bands add up to 121 Mpx
 BYTES_PER_PIXEL = 3.7e9 / 121e6
 Box = tuple[int, int, int, int]
+# astropy has no type hints, so these only name what a value is
+FitsHDUList: TypeAlias = Any
+SkyWcs: TypeAlias = Any
+SkyCoords: TypeAlias = Any
 
 
 def memory_size() -> float:
@@ -169,11 +154,19 @@ class Config:
         """
         root = self.out / "fields"
         found = sorted(f.name for f in root.iterdir()) if root.is_dir() else []
-        names = list(self.fields) or found
+        names = found
+        if self.fields:
+            # a configured mosaic cut in tiles is read as its tiles
+            names = []
+            for f in self.fields:
+                names += [n for n in found if n != f and split_tile(n)[0] == f] or [f]
+        names = [n for n in names if not (root / n / EMPTY).is_file()]
         uncut = [n for n in names if not (root / n / "stamps.npy").is_file()]
         if not names or uncut:
             what = ", ".join(uncut[:3]) if uncut else "Nothing"
-            msg = f"{what} hasn't been cut into {root} yet. Run objects cut first."
+            msg = (
+                f"{what} hasn't been cut into {root} yet. Run jwst-peculiar cut first."
+            )
             raise SystemExit(msg)
         return names
 
@@ -266,7 +259,7 @@ def _check_keys(path: Path, raw: dict[str, Any]) -> None:
             raise SystemExit(msg)
     for key in ("name", "out", "pattern"):
         if key not in raw:
-            msg = f"{path} has no {key!r}, which every objects config needs."
+            msg = f"{path} has no {key!r}, which every config needs."
             raise SystemExit(msg)
 
 
@@ -338,83 +331,3 @@ def read_config(path: Path) -> Config:
     cfg = Config(**_resolve(path, raw))
     _check_bands(path, cfg)
     return cfg
-
-
-def run(cfg: Config, rest: list[str]) -> int:
-    """Check, cut, embed, rank and list compact sources, stopping at a failed step.
-
-    Returns:
-        The first nonzero exit code, or 0.
-    """
-    from jwst_peculiar.objects import compact  # noqa: PLC0415 these load torch and scikit-learn
-    from jwst_peculiar.objects.check import main as check  # noqa: PLC0415 as above
-    from jwst_peculiar.objects.cut import main as cut  # noqa: PLC0415 as above
-    from jwst_peculiar.objects.embed import main as embed  # noqa: PLC0415 as above
-    from jwst_peculiar.objects.rank import main as rank  # noqa: PLC0415 as above
-
-    steps = [(check, []), (cut, rest), (embed, []), (rank, ["rank"])]
-    if compact.has_bands(cfg):
-        steps.append((compact.main, []))
-    for step, args in steps:
-        code = step(cfg, args)
-        if code:
-            return code
-    return 0
-
-
-STEP_HELP = """steps:
-  init     write a config from a folder of mosaics (give the folder for CONFIG)
-  check    say what the config finds and anything wrong with it
-  run      check, cut, embed, rank and compact in turn
-  cut      find sources, flag artefacts and cut stamps
-  embed    Zoobot embeddings of the stamps, on the GPU if there is one
-  rank     the rarity list, with the label model once there are verdicts
-  like     the objects that look most like ones you give
-  label    a random sample to give verdicts on in the viewer
-  view     open a list in the browser
-  compact  the list of sources too small for a stamp
-
-jwst-peculiar objects STEP CONFIG --help shows a step's own options."""
-
-
-def main(argv: list[str] | None = None) -> int:
-    """Run one step of the object search.
-
-    Returns:
-        The step's exit code.
-    """
-    p = argparse.ArgumentParser(
-        description="Run one step of the object search.",
-        epilog=STEP_HELP,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    p.add_argument("step", choices=STEPS)
-    p.add_argument(
-        "config", type=Path, help="the survey's YAML config, or for init its mosaics"
-    )
-    p.add_argument("rest", nargs=argparse.REMAINDER, help="the step's own options")
-    a = p.parse_args(argv)
-    if a.step == "init":
-        from jwst_peculiar.objects.init import main as init  # noqa: PLC0415 it reads no config
-
-        return init([str(a.config), *a.rest])
-    asks = {"-h", "--help"} & set(a.rest)
-    # a step's options can be looked up before there's a config to give it
-    cfg = Config("help", Path(), "{field}_{band}") if asks else read_config(a.config)
-    if a.step == "run" and not asks:
-        return run(cfg, a.rest)
-    if a.step == "check":
-        from jwst_peculiar.objects.check import main as step  # noqa: PLC0415 loads torch for the device
-    elif a.step in {"cut", "run"}:  # run passes its options to cut
-        from jwst_peculiar.objects.cut import main as step  # noqa: PLC0415 torch-free but slow to import
-    elif a.step == "embed":
-        from jwst_peculiar.objects.embed import main as step  # noqa: PLC0415 loads torch
-    elif a.step == "view":
-        from jwst_peculiar.objects.view import main as step  # noqa: PLC0415 loads the server
-    elif a.step == "compact":
-        from jwst_peculiar.objects.compact import main as step  # noqa: PLC0415 loads scikit-learn
-    else:
-        from jwst_peculiar.objects.rank import main as step  # noqa: PLC0415 loads scikit-learn
-
-        return step(cfg, [a.step, *a.rest])
-    return step(cfg, a.rest)

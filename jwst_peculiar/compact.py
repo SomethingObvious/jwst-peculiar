@@ -1,6 +1,6 @@
 """The compact branch: small sources without a stamp, ranked on how rare they look.
 
-`objects cut` writes each field's compact candidates to compact.csv. A candidate is
+`cut` writes each field's compact candidates to compact.csv. A candidate is
 a segment with S/N 10 or more and a semimajor axis of 0.12" or less or an area
 under 60 pixels, found in F277W, or in F444W where F277W has no segment of S/N 10
 there, as little red dots and brown dwarfs are brightest in F444W. Each gets these
@@ -33,7 +33,7 @@ tests as `flag_*` columns.
   sigma under the sky as near in F277W and F444W and within 0.1" plus 1.5 pixels in
   F115W and F150W, as only the 0.1" flux of those is ranked.
 
-`objects compact` fits a 20-component Gaussian mixture to the unflagged candidates'
+`compact` fits a 20-component Gaussian mixture to the unflagged candidates'
 three colours and two concentrations, and ranks them on minus the log density with
 each candidate's own errors added to every component, averaged over three fits with
 different seeds. Two single fits share about 84 of their top 100 on COSMOS-Web, and
@@ -57,8 +57,8 @@ from PIL import Image
 from scipy.spatial import cKDTree
 from scipy.special import logsumexp
 
-from jwst_peculiar.objects import sky_wcs
-from jwst_peculiar.objects.flags import (
+from jwst_peculiar.config import sky_wcs
+from jwst_peculiar.flags import (
     DETECTED,
     MIN_BANDS,
     known_stars,
@@ -69,9 +69,8 @@ from jwst_peculiar.objects.flags import (
 if TYPE_CHECKING:
     import numpy.typing as npt
 
-    from jwst_peculiar.objects import Config
-    from jwst_peculiar.objects.cut import Band
-    from jwst_peculiar.utils import FitsHDUList
+    from jwst_peculiar.config import Config, FitsHDUList
+    from jwst_peculiar.cut import Band
 
     Floats = npt.NDArray[np.float64]
     Bools = npt.NDArray[np.bool_]
@@ -453,9 +452,9 @@ def fit(x: Floats, seed: int = 0) -> Any:  # noqa: ANN401 scikit-learn has no ty
     """Return the mixture the candidates are ranked under, fitted to `x`."""
     from sklearn.mixture import GaussianMixture  # noqa: PLC0415 only compact needs it
 
-    mix = GaussianMixture(
-        COMPONENTS, covariance_type="full", random_state=seed, max_iter=500
-    )
+    # fewer components for a run of fewer than 200 candidates, at least 10 to each
+    n = min(COMPONENTS, max(1, len(x) // 10))
+    mix = GaussianMixture(n, covariance_type="full", random_state=seed, max_iter=500)
     return mix.fit(x)
 
 
@@ -529,9 +528,15 @@ def load(cfg: Config) -> pd.DataFrame:
     for name in cfg.cut_fields():
         path = cfg.out / "fields" / name / LIST
         if not path.exists():
-            msg = f"{name} has no {LIST}. Run objects cut first."
+            msg = f"{name} has no {LIST}. Run jwst-peculiar cut first."
             raise SystemExit(msg)
-        cats.append(pd.read_csv(path))
+        cat = pd.read_csv(path)
+        # an empty one reads back untyped, as in rank.load
+        if len(cat):
+            cats.append(cat)
+    if not cats:
+        msg = "No field has any compact candidates."
+        raise SystemExit(msg)
     t = pd.concat(cats, ignore_index=True)
     t["id"] = t.field + ":" + t.label.astype(str)
     return t
@@ -588,7 +593,7 @@ def main(cfg: Config, argv: list[str]) -> int:
     Raises:
         SystemExit: When the run lacks one of the four bands.
     """
-    p = argparse.ArgumentParser(prog="jwst-peculiar objects compact CONFIG")
+    p = argparse.ArgumentParser(prog="jwst-peculiar compact CONFIG")
     p.add_argument("-n", type=int, default=500, help="how many candidates to list")
     a = p.parse_args(argv)
     if not has_bands(cfg):

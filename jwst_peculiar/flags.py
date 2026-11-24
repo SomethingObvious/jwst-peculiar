@@ -24,9 +24,8 @@ from scipy.spatial import cKDTree
 if TYPE_CHECKING:
     import numpy.typing as npt
 
-    from jwst_peculiar.objects import Config
-    from jwst_peculiar.objects.cut import Band
-    from jwst_peculiar.utils import SkyCoords
+    from jwst_peculiar.config import Config, SkyCoords
+    from jwst_peculiar.cut import Band
 
     Floats = npt.NDArray[np.float64]
     Bools = npt.NDArray[np.bool_]

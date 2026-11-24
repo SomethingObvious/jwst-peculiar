@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import codecs
+import csv
+from http.client import HTTPConnection
+from http.server import ThreadingHTTPServer
 import io
 import json
 import pathlib
 import re
-from typing import TYPE_CHECKING
+import socket
+import threading
+from typing import TYPE_CHECKING, Any
+from urllib.parse import quote, unquote
 
 from astropy.io import fits
 from astropy.wcs import WCS
@@ -13,11 +20,12 @@ import pandas as pd
 from PIL import Image
 import pytest
 from sklearn.linear_model import LogisticRegression
+import torch
 
-from jwst_peculiar.bundle import add_site_meta, export, save_verdict
-from jwst_peculiar.objects import Config, main, read_config, run, written
-from jwst_peculiar.objects.check import report
-from jwst_peculiar.objects.compact import (
+from jwst_peculiar import server
+from jwst_peculiar.check import report
+from jwst_peculiar.cli import main, run
+from jwst_peculiar.compact import (
     BANDS,
     bad_pixel,
     blue_star,
@@ -28,7 +36,11 @@ from jwst_peculiar.objects.compact import (
     one_pair,
     sharp,
 )
-from jwst_peculiar.objects.cut import (
+from jwst_peculiar.compact import (
+    main as compact_main,
+)
+from jwst_peculiar.config import EMPTY, Config, read_config, written
+from jwst_peculiar.cut import (
     Band,
     N,
     detect,
@@ -36,10 +48,15 @@ from jwst_peculiar.objects.cut import (
     gaia_stars,
     photometry,
     render,
+    wcs_record,
 )
-from jwst_peculiar.objects.flags import blobs, merged, on_spikes
-from jwst_peculiar.objects.init import guess, split_name
-from jwst_peculiar.objects.rank import (
+from jwst_peculiar.cut import (
+    main as cut_main,
+)
+from jwst_peculiar.embed import embed
+from jwst_peculiar.flags import blobs, merged, on_spikes
+from jwst_peculiar.init import guess, split_name
+from jwst_peculiar.rank import (
     CLASSES,
     MODEL,
     Objects,
@@ -50,10 +67,12 @@ from jwst_peculiar.objects.rank import (
     rarity,
     reference,
 )
-from jwst_peculiar.objects.view import ObjectBundle
-from jwst_peculiar.prep import wcs_record
+from jwst_peculiar.server import make_handler, open_server
+from jwst_peculiar.verdicts import read_verdicts, save_verdict
+from jwst_peculiar.view import ObjectBundle, add_site_meta, export, lit_span
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
     import numpy.typing as npt
@@ -375,6 +394,7 @@ def test_cut_stops_with_the_way_round_when_gaia_is_down(
         raise pyvo.dal.DALFormatError(Exception())
 
     monkeypatch.setattr(pyvo.dal, "TAPService", broken)
+    monkeypatch.setattr("jwst_peculiar.cut.GAIA_WAITS", (0, 0))
     cfg = Config(name="t", out=tmp_path, pattern="{field}_{band}.fits")
     with pytest.raises(SystemExit, match="Set gaia: false to skip spikes"):
         gaia_stars(cfg, "a", offsets([0.0], [0.0]))
@@ -597,8 +617,8 @@ def test_check_says_what_tile_size_would_fit_in_memory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cfg = tiled(tmp_path, 0)
-    monkeypatch.setattr("jwst_peculiar.objects.check.memory_size", lambda: 1e9)
-    monkeypatch.setattr("jwst_peculiar.objects.check.BYTES_PER_PIXEL", 1e5)
+    monkeypatch.setattr("jwst_peculiar.check.memory_size", lambda: 1e9)
+    monkeypatch.setattr("jwst_peculiar.check.BYTES_PER_PIXEL", 1e5)
     said = [p for p in report(cfg) if "tile:" in p]
     assert said == [
         (
@@ -643,9 +663,9 @@ def test_cut_runs_as_many_fields_at_once_as_cores_and_memory_allow(
     names = cfg.field_names()
     # the biggest tile reads 3.5 Mpx in all, about 106 MB at 31 bytes a pixel
     monkeypatch.setattr("os.cpu_count", lambda: 16)
-    monkeypatch.setattr("jwst_peculiar.objects.cut.memory_size", lambda: 1e12)
+    monkeypatch.setattr("jwst_peculiar.cut.memory_size", lambda: 1e12)
     assert fitting_workers(cfg, names) == 4
-    monkeypatch.setattr("jwst_peculiar.objects.cut.memory_size", lambda: 0.13e9)
+    monkeypatch.setattr("jwst_peculiar.cut.memory_size", lambda: 0.13e9)
     assert fitting_workers(cfg, names) == 1
     assert fitting_workers(cfg, names[:1]) == 1
 
@@ -723,7 +743,7 @@ def test_cached_weights_load_without_asking_the_hub(
     import timm
     import torch
 
-    from jwst_peculiar.objects.embed import load_encoder
+    from jwst_peculiar.embed import load_encoder
 
     seen = []
 
@@ -750,3 +770,259 @@ def test_a_steps_options_show_without_a_config(
         main([step, str(tmp_path / "none.yaml"), "--help"])
     assert done.value.code == 0
     assert "--workers" in capsys.readouterr().out
+
+
+@pytest.fixture
+def listed(tmp_path: Path) -> Config:
+    """Three objects of one field in rank.csv, with the field's preview.
+
+    Returns:
+        The run's config.
+    """
+    cfg = fake_run(tmp_path, 3)
+    Image.new("RGB", (200, 200), (40, 40, 40)).save(tmp_path / "fields/a/field.png")
+    offsets([0.0, 100.0, 200.0], [0.0] * 3).assign(
+        id=["a:1", "a:2", "a:3"], field="a", half=1.0
+    ).to_csv(tmp_path / "rank.csv", index=False)
+    return cfg
+
+
+@pytest.fixture
+def port(listed: Config) -> Iterator[int]:
+    handler = make_handler(ObjectBundle(listed, listed.out / "rank.csv", writable=True))
+    # short, so a request that stalls fails the test quickly
+    handler.timeout = 1
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield server.server_port
+    server.shutdown()
+    server.server_close()
+
+
+def _ask(
+    port: int,
+    method: str,
+    path: str,
+    *,
+    body: dict[str, Any] | None = None,
+    **headers: str,
+) -> tuple[int, bytes]:
+    conn = HTTPConnection("127.0.0.1", port, timeout=10)
+    data = json.dumps(body).encode() if body is not None else None
+    conn.request(method, path, body=data, headers=headers)
+    res = conn.getresponse()
+    out = res.status, res.read()
+    conn.close()
+    return out
+
+
+def _raw(port: int, request: bytes) -> int:
+    with socket.create_connection(("127.0.0.1", port), timeout=10) as s:
+        s.sendall(request)
+        return int(s.recv(1024).split()[1])
+
+
+def test_its_own_page_reads_and_writes(port: int, listed: Config) -> None:
+    status, body = _ask(port, "GET", "/run/index.json")
+    assert status == 200
+    assert len(json.loads(body)["tiles"]) == 3
+    here = f"http://127.0.0.1:{port}"
+    verdict = {"key": "a:3", "verdict": "artifact"}
+    status, _ = _ask(port, "POST", "/run/api/verdict", body=verdict, Origin=here)
+    assert status == 200
+    assert read_verdicts(listed.out)["a:3"]["verdict"] == "artifact"
+    status, _ = _ask(port, "POST", "/run/api/verdict", body={"key": "a:9"})
+    assert status == 400
+
+
+def test_another_site_gets_nothing(port: int, listed: Config) -> None:
+    # a page elsewhere posting to localhost, which a browser allows
+    verdict = {"key": "a:3", "verdict": "artifact"}
+    status, _ = _ask(
+        port, "POST", "/run/api/verdict", body=verdict, Origin="https://example.org"
+    )
+    assert status == 403
+    assert read_verdicts(listed.out) == {}
+    # a domain pointed at 127.0.0.1 still names itself in Host
+    status, _ = _ask(port, "GET", "/run/index.json", Host=f"example.org:{port}")
+    assert status == 403
+    assert _raw(port, b"GET /run/index.json HTTP/1.0\r\n\r\n") == 403
+    assert _ask(port, "GET", "/run/index.json", Origin="null")[0] == 403
+    # a link or image on another site carries no Origin on a GET
+    for site, want in (("cross-site", 403), ("same-origin", 200)):
+        request = f"GET /run/index.json HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\n"
+        request += f"Sec-Fetch-Site: {site}\r\n\r\n"
+        assert _raw(port, request.encode()) == want
+
+
+def test_paths_stay_inside_the_viewer_and_the_list(port: int) -> None:
+    # each of these is a way of asking for server.py, one folder above the viewer's
+    here = pathlib.Path(server.__file__).resolve()
+    assert (server.APP_DIR / ".." / "server.py").resolve() == here
+    assert _ask(port, "GET", "/run/mosaics/a.png")[0] == 200
+    for path in (
+        "/../server.py",
+        "/%2e%2e/server.py",
+        "/%2E%2E%2Fserver.py",
+        "/..%5Cserver.py",
+        "/assets/../../server.py",
+        "/" + quote(str(here)),
+        "/run/../server.py",
+        "/run/mosaics/a%00.png",
+    ):
+        want = {"error": f"There is nothing at {unquote(path).lstrip('/')}"}
+        assert _ask(port, "GET", path) == (404, json.dumps(want).encode()), path
+
+
+def test_a_bad_body_is_refused(port: int, listed: Config) -> None:
+    body = b'{"key": "a:3"}'
+    head = f"POST /run/api/verdict HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\n"
+    head += f"Content-Length: {len(body) + 10}\r\n\r\n"
+    assert _raw(port, head.encode() + body) == 400
+    verdict = {"key": "a:3", "verdict": None, "star": "false"}
+    status, said = _ask(port, "POST", "/run/api/verdict", body=verdict)
+    assert (status, json.loads(said)) == (
+        400,
+        {"error": "star has to be true or false, not 'false'"},
+    )
+    assert read_verdicts(listed.out) == {}
+
+
+def test_verdicts_saved_by_a_spreadsheet_still_load(port: int, listed: Config) -> None:
+    # Excel's "CSV UTF-8" starts the file with a byte order mark, and a column of
+    # your own has to survive the next save
+    (listed.out / "verdicts.csv").write_bytes(
+        codecs.BOM_UTF8
+        + b"key,verdict,star,note,updated,mine\r\n"
+        + b"a:1,artifact,1,x,2026-01-01,keep me\r\n"
+    )
+    status, body = _ask(port, "GET", "/run/verdicts.json")
+    assert status == 200
+    assert json.loads(body)["a:1"] == {
+        "mine": "keep me",
+        "verdict": "artifact",
+        "star": True,
+        "note": "x",
+        "updated": "2026-01-01",
+    }
+    verdict = {"key": "a:3", "verdict": "known", "star": False, "note": ""}
+    assert _ask(port, "POST", "/run/api/verdict", body=verdict)[0] == 200
+    save_verdict(listed.out, "a:1", None, False, "")
+    with (listed.out / "verdicts.csv").open(encoding="utf-8", newline="") as f:
+        rows = list(csv.reader(f))
+    assert rows[0] == ["key", "verdict", "star", "note", "updated", "mine"]
+    assert rows[1][:4] == ["a:1", "", "0", ""]
+    assert rows[1][5] == "keep me"
+    assert rows[2][:4] == ["a:3", "known", "0", ""]
+    with pytest.raises(ValueError, match="Unknown verdict"):
+        save_verdict(listed.out, "a:1", "odd", False, "")
+
+
+def test_the_page_hears_why_verdicts_did_not_load(port: int, listed: Config) -> None:
+    (listed.out / "verdicts.csv").write_text("tile,verdict\na:1,known\n", "utf-8")
+    status, body = _ask(port, "GET", "/run/verdicts.json")
+    assert (status, json.loads(body)) == (
+        500,
+        {"error": "Couldn't read run/verdicts.json: KeyError: 'key'"},
+    )
+
+
+def test_export_leaves_a_folder_of_other_files_alone(
+    listed: Config, tmp_path: Path
+) -> None:
+    b = ObjectBundle(listed, listed.out / "rank.csv", writable=False)
+    mine = tmp_path / "mine"
+    (mine / "run").mkdir(parents=True)
+    (mine / "run" / "notes.txt").write_text("mine", encoding="utf-8")
+    with pytest.raises(SystemExit, match="isn't empty and isn't an earlier export"):
+        export(b, mine)
+    assert (mine / "run" / "notes.txt").read_text(encoding="utf-8") == "mine"
+    # an earlier export is replaced, as is an empty folder
+    site = tmp_path / "site"
+    site.mkdir()
+    first = export(b, site)
+    assert export(b, site) == first
+
+
+def test_site_meta_takes_any_name_and_url(listed: Config, tmp_path: Path) -> None:
+    b = ObjectBundle(listed, listed.out / "rank.csv", writable=False)
+    b.index["run"]["name"] = "COSMOS\\d field</script>"
+    site = tmp_path / "site"
+    export(b, site)
+    (site / "index.html").write_text(
+        "<html><head><title>x</title>\n  </head></html>", encoding="utf-8"
+    )
+    add_site_meta(b, site, "https://example.org/a?x=1&y=2")
+    page = (site / "index.html").read_text(encoding="utf-8")
+    assert "<title>COSMOS\\d field&lt;/script&gt; · jwst-peculiar</title>" in page
+    assert page.count("</script>") == 1
+    sitemap = (site / "sitemap.xml").read_text(encoding="utf-8")
+    assert "<loc>https://example.org/a?x=1&amp;y=2/</loc>" in sitemap
+
+
+def test_social_card_keeps_off_a_blank_gap() -> None:
+    lit = np.r_[np.full(10, 0.4), np.zeros(5), np.full(30, 0.4)]
+    lo, hi = lit_span(lit, 20, 20)
+    assert 12 < lo <= 15
+    assert hi == 45
+    # too short a run to fit the card falls back to the whole axis
+    assert lit_span(lit, 20, 40) == (0, 45)
+
+
+def test_a_second_viewer_moves_to_a_free_port(listed: Config) -> None:
+    served = ObjectBundle(listed, listed.out / "rank.csv", writable=False)
+    first = open_server(served, 0)
+    port = first.server_port
+    try:
+        second = open_server(served, port)
+        assert second.server_port not in {0, port}
+        second.server_close()
+    finally:
+        first.server_close()
+
+
+def half_blank(tmp_path: Path) -> Config:
+    # galaxies on the left of a 1500 by 600 mosaic, and nothing at all on its right
+    rng = np.random.default_rng(3)
+    y, x = np.mgrid[:600, :1500]
+    sky = rng.normal(0, 1, (600, 1500)).astype(np.float32)
+    for i in range(40):
+        x0, y0, r = 30 + 12 * i, 40 + (i * 37) % 520, 2 + i % 5
+        sky += 400 * np.exp(-((x - x0) ** 2 + (y - y0) ** 2) / (2 * r**2))
+    sky[:, 700:] = 0
+    w = band(sky).wcs
+    for b in BANDS:
+        hdu = fits.ImageHDU(sky, w.to_header())
+        fits.HDUList([fits.PrimaryHDU(), hdu]).writeto(tmp_path / f"a_{b}.fits")
+    return Config(
+        name="t",
+        out=tmp_path / "run",
+        pattern=f"{tmp_path.as_posix()}/{{field}}_{{band}}.fits",
+        fields=("a",),
+        gaia=False,
+        tile=500,
+    )
+
+
+def test_a_tile_off_the_mosaic_is_left_out_of_every_step(tmp_path: Path) -> None:
+    cfg = half_blank(tmp_path)
+    assert cut_main(cfg, ["--workers", "1"]) == 0
+    root = cfg.out / "fields"
+    assert (root / "a~0-2" / EMPTY).is_file()
+    assert cfg.cut_fields() == ["a~0-0", "a~0-1", "a~1-0", "a~1-1"]
+    # the mean colour stands in for Zoobot, and some tiles have no stamps at all
+    net = torch.nn.Sequential(torch.nn.AdaptiveAvgPool2d(1), torch.nn.Flatten())
+    for f in cfg.cut_fields():
+        stamps = np.load(root / f / "stamps.npy")
+        rows = embed(stamps, net, device=torch.device("cpu"))
+        assert rows.shape == (len(stamps), 3)
+        np.save(
+            root / f / "embeddings.npy",
+            rows + 0.01 * np.arange(rows.size).reshape(rows.shape),
+        )
+    assert rank_main(cfg, ["-n", "5"]) == 0
+    assert len(pd.read_csv(cfg.out / "rank.csv")) == 5
+    assert compact_main(cfg, ["-n", "5"]) == 0
+    assert len(pd.read_csv(cfg.out / "compact.csv")) == 5
+    # a second cut leaves the empty tiles be
+    assert cut_main(cfg, ["--workers", "1"]) == 0

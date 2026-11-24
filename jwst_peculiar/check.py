@@ -1,4 +1,4 @@
-"""`objects check`: what a config finds, before a long cut.
+"""`check`: what a config finds, before a long cut.
 
 It lists the fields and any mosaic they lack, the memory `cut` will roughly need
 for the biggest one and the disk the run will, the device `embed` would use,
@@ -16,13 +16,13 @@ import warnings
 
 from astropy.io import fits
 
-from jwst_peculiar.data import resolve_device
-from jwst_peculiar.objects import BYTES_PER_PIXEL, memory_size
+from jwst_peculiar.config import BYTES_PER_PIXEL, memory_size
+from jwst_peculiar.embed import resolve_device
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from jwst_peculiar.objects import Config
+    from jwst_peculiar.config import Config
 
 # SMACS 0723's run folder took 307 MB for 121 Mpx, the most per pixel measured
 DISK_PER_PIXEL = 307e6 / 121e6
@@ -114,7 +114,7 @@ def report(cfg: Config) -> list[str]:
     names = cfg.field_names()
     missing = cfg.missing()
     print(f"{len(names)} fields, bands {', '.join(cfg.bands)}")  # noqa: T201 the command's report
-    from jwst_peculiar.objects.compact import BANDS, has_bands  # noqa: PLC0415 only the report needs it
+    from jwst_peculiar.compact import BANDS, has_bands  # noqa: PLC0415 only the report needs it
 
     if not has_bands(cfg):
         print(f"no compact list, as it needs {', '.join(BANDS)}")  # noqa: T201 the command's report
@@ -153,7 +153,7 @@ def main(cfg: Config, argv: list[str]) -> int:
     Returns:
         0 when it's ready to run, 1 when there's a problem.
     """
-    argparse.ArgumentParser(prog="jwst-peculiar objects check CONFIG").parse_args(argv)
+    argparse.ArgumentParser(prog="jwst-peculiar check CONFIG").parse_args(argv)
     problems = report(cfg)
     for p in problems:
         print(f"problem: {p}")  # noqa: T201 the command's report

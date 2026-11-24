@@ -20,7 +20,7 @@ pip install -e .
 
 It needs Python 3.11 or newer, and `pip install git+https://github.com/SomethingObvious/jwst-peculiar` installs it without a clone. On Windows pip installs the CPU build of PyTorch even when there is an NVIDIA GPU, so install the CUDA build from [pytorch.org](https://pytorch.org/get-started/locally/) first if you have one. `embed` ran 9 times faster on a laptop GPU than on its CPU. `jwst-peculiar objects check` says which device it will use.
 
-A YAML file says where a survey's mosaics are.
+A YAML file says where a survey's mosaics are, and `objects init` writes one from the file names in a folder of them.
 
 ```yaml
 name: cosmos-web
@@ -30,6 +30,8 @@ bands: [f115w, f150w, f277w, f444w]
 ```
 
 ```
+jwst-peculiar objects init mosaics survey.yaml
+jwst-peculiar objects check survey.yaml
 jwst-peculiar objects cut survey.yaml
 jwst-peculiar objects embed survey.yaml
 jwst-peculiar objects rank survey.yaml

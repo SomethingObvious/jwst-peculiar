@@ -19,6 +19,7 @@ from jwst_peculiar.objects.check import report
 from jwst_peculiar.objects.compact import dark_middle, one_band, one_pair, sharp
 from jwst_peculiar.objects.cut import Band, N, gaia_stars, render
 from jwst_peculiar.objects.flags import blobs, merged, on_spikes
+from jwst_peculiar.objects.init import guess, split_name
 from jwst_peculiar.objects.rank import (
     CLASSES,
     MODEL,
@@ -340,3 +341,37 @@ def test_cut_stops_with_the_way_round_when_gaia_is_down(
     cfg = Config(name="t", out=tmp_path, pattern="{field}_{band}.fits")
     with pytest.raises(SystemExit, match="Set gaia: false to skip spikes"):
         gaia_stars(cfg, "a", offsets([0.0], [0.0]))
+
+
+@pytest.mark.parametrize(
+    ("name", "split"),
+    [
+        (
+            "jw02736-o001_t001_nircam_clear-f090w_i2d.fits",
+            ("jw02736-o001_t001", "{field}_nircam_clear-{band}_i2d.fits", "f090w"),
+        ),
+        (
+            "jw01727-o001_t001_F444W_sci.fits",
+            ("jw01727-o001_t001", "{field}_{band}_sci.fits", "f444w"),
+        ),
+        ("notes.fits", None),
+    ],
+)
+def test_init_reads_the_field_and_filter_from_mast_and_survey_names(
+    name: str, split: tuple[str, str, str] | None
+) -> None:
+    assert split_name(name) == split
+
+
+def test_init_keeps_the_bands_every_field_has(tmp_path: Path) -> None:
+    folder = tmp_path / "mosaics"
+    folder.mkdir()
+    for field in ("a1", "b2"):
+        for b in ("f090w", "f150w", "f200w", "f277w", "f356w", "f444w"):
+            (folder / f"{field}_nircam_clear-{b}_i2d.fits").touch()
+    (folder / "a1_nircam_clear-f115w_i2d.fits").touch()
+    keys = guess(folder)
+    assert keys["pattern"] == "mosaics/{field}_nircam_clear-{band}_i2d.fits"
+    assert keys["bands"] == ["f090w", "f150w", "f277w", "f444w"]
+    assert keys["colour"] == ["f277w", "f150w", "f090w"]
+    assert "fields" not in keys

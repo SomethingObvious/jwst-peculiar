@@ -5,7 +5,8 @@ into Zoobot embeddings, `rank` writes the rarity list, `like` finds the objects 
 like a seed, `view` opens a list in the web viewer to judge, and `label`
 trains the classifier `rank` weights rarity by on the verdicts given there.
 `compact` ranks the small sources `cut` leaves without a stamp on their colours,
-and `check` says what a config finds before any of that runs.
+`init` writes a config for a folder of mosaics, and `check` says what a config finds
+before any of that runs.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ import yaml
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-STEPS = ("check", "cut", "embed", "rank", "like", "label", "view", "compact")
+STEPS = ("init", "check", "cut", "embed", "rank", "like", "label", "view", "compact")
 
 
 @dataclass(frozen=True)
@@ -193,9 +194,15 @@ def main(argv: list[str] | None = None) -> int:
     """
     p = argparse.ArgumentParser(description="Run one step of the object search.")
     p.add_argument("step", choices=STEPS)
-    p.add_argument("config", type=Path, help="the survey's YAML config")
+    p.add_argument(
+        "config", type=Path, help="the survey's YAML config, or for init its mosaics"
+    )
     p.add_argument("rest", nargs=argparse.REMAINDER, help="the step's own options")
     a = p.parse_args(argv)
+    if a.step == "init":
+        from jwst_peculiar.objects.init import main as init  # noqa: PLC0415 it reads no config
+
+        return init([str(a.config), *a.rest])
     cfg = read_config(a.config)
     if a.step == "check":
         from jwst_peculiar.objects.check import main as step  # noqa: PLC0415 loads torch for the device

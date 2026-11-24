@@ -32,7 +32,7 @@ python -m jwst_peculiar.confirm --default DIRS --candidate DIRS      the sign-fl
 
 `jwst-peculiar objects` searches object by object rather than tile by tile. It finds the sources in each field, cuts a colour stamp of every one big and bright enough, embeds the stamps with Zoobot and ranks them by how unlike every other object they are. [objects-plan.md](objects-plan.md) has how it was built and how well it does.
 
-A YAML file says where a survey's mosaics are. Paths in it are relative to the file.
+A YAML file says where a survey's mosaics are. Paths in it are relative to the file. `objects init mosaics survey.yaml` writes one for a folder of mosaics, reading the field and filter out of names like MAST's `jw02736-o001_t001_nircam_clear-f090w_i2d.fits`. It keeps the bands every field has, finds sources in the one nearest F277W and colours the stamps with that, the one nearest F150W and the bluest.
 
 ```yaml
 name: cosmos-web
@@ -51,6 +51,7 @@ Without `fields`, every mosaic the pattern matches in the detect band is a field
 `check` reads the config and says what it found before any long step runs: how many fields, any mosaic a field lacks, the memory `cut` needs for the biggest field and the disk the whole run needs, the device `embed` will use and whether the Zoobot weights are downloaded yet. The disk figure is an upper bound, as SMACS 0723 took 2.5 bytes per mosaic pixel and COSMOS-Web 1.5. A misspelled key, a band missing from `bands` or a pattern without `{band}` stops it with the reason.
 
 ```
+jwst-peculiar objects init mosaics survey.yaml  a config from the mosaics' file names
 jwst-peculiar objects check survey.yaml       what the config finds, before a long run
 jwst-peculiar objects cut survey.yaml         detect, measure, flag and cut stamps
 jwst-peculiar objects embed survey.yaml       Zoobot embeddings of every stamp

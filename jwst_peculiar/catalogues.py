@@ -92,7 +92,7 @@ ID_NAMES = ("id", "name", "source_id", "number", "objid", "object")
 TIMEOUT_S = 60
 
 
-class _PatientSession(requests.Session):
+class PatientSession(requests.Session):
     """A session that gives up on a stalled server, which pyvo's own never does."""
 
     @override
@@ -149,7 +149,7 @@ def _query(
     spec = SERVICES[cat]
     name_col, type_col, note_col = spec["columns"]
     rows: dict[str, list[Any]] = {}
-    service = pyvo.dal.TAPService(url, session=_PatientSession())
+    service = pyvo.dal.TAPService(url, session=PatientSession())
     for ra, dec in centres:
         cone = CONE.format(ra=ra, dec=dec, r=radius_arcmin / 60)
         result = service.run_sync(spec["adql"].format(cone=cone), maxrec=2_000_000)
@@ -181,13 +181,17 @@ def fetch(
         The rows and the mirror that answered, or the errors when none did.
     """
     errors: list[str] = []
-    for url in SERVICES[cat]["urls"]:
+    urls = SERVICES[cat]["urls"]
+    for url in list(urls):
         try:
             rows = _query(cat, url, centres, radius_arcmin=radius_arcmin)
         except Exception as exc:  # noqa: BLE001 any failure moves on to the next mirror
             errors.append(f"{url}: {type(exc).__name__}: {str(exc)[:200]}")
             logger.warning("%s didn't answer at %s, %s", cat, url, type(exc).__name__)
             continue
+        # vet and match call this once a tile, so the mirror that answered goes first
+        urls.remove(url)
+        urls.insert(0, url)
         return {"ok": True, "server": url, "rows": rows}
     return {"ok": False, "error": " | ".join(errors), "rows": []}
 

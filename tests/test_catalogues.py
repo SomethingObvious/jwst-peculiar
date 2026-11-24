@@ -56,3 +56,21 @@ def test_a_service_that_goes_quiet_is_given_up_on(
     assert not worker.is_alive()
     assert got["ok"] is False
     assert got["error"].count("Timeout") == 2
+
+
+def test_a_dead_mirror_is_skipped_for_the_rest_of_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asked: list[str] = []
+
+    def query(cat: str, url: str, *args: object, **kwargs: object) -> list[list[Any]]:
+        asked.append(url)
+        if url == "down":
+            raise ConnectionError(url)
+        return []
+
+    monkeypatch.setitem(catalogues.SERVICES["SIMBAD"], "urls", ["down", "up"])
+    monkeypatch.setattr(catalogues, "_query", query)
+    assert catalogues.fetch("SIMBAD", [(10.0, -5.0)], 1.0)["server"] == "up"
+    assert catalogues.fetch("SIMBAD", [(10.0, -5.0)], 1.0)["server"] == "up"
+    assert asked == ["down", "up", "up"]

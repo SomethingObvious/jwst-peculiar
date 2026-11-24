@@ -1,13 +1,15 @@
 """`objects check`: what a config finds, before a long cut.
 
-It lists the fields and any mosaic they lack, the size of the biggest one and the
-memory `cut` will roughly need for it, the device `embed` would use, whether the
-Zoobot weights are downloaded yet, and whether the run folder can be written.
+It lists the fields and any mosaic they lack, the memory `cut` will roughly need
+for the biggest one and the disk the run will, the device `embed` would use,
+whether the Zoobot weights are downloaded yet, and whether the run folder can be
+written.
 """
 
 from __future__ import annotations
 
 import argparse
+import shutil
 from typing import TYPE_CHECKING
 
 from astropy.io import fits
@@ -19,6 +21,8 @@ if TYPE_CHECKING:
 
 # cut committed 3.7 GB at its peak on SMACS 0723, whose four bands add up to 121 Mpx
 BYTES_PER_PIXEL = 3.7e9 / 121e6
+# and its run folder took 307 MB, the most per pixel of any field measured
+DISK_PER_PIXEL = 307e6 / 121e6
 WEIGHTS = "mwalmsley/zoobot-encoder-convnext_nano"
 
 
@@ -52,6 +56,12 @@ def _memory(cfg: Config, names: list[str], gone: set[str]) -> list[str]:
     px = sizes[biggest]
     said = f"biggest field {biggest}, {px / 1e6:.0f} Mpx"
     print(f"{said}, cut needs about {px * BYTES_PER_PIXEL / 1e9:.1f} GB")  # noqa: T201 the command's report
+    need = sum(sizes.values()) * DISK_PER_PIXEL / 1e9
+    cfg.out.mkdir(parents=True, exist_ok=True)
+    free = shutil.disk_usage(cfg.out).free / 1e9
+    print(f"the run needs up to about {need:.1f} GB of disk, {free:.0f} GB is free")  # noqa: T201
+    if need > free:
+        return [f"the run folder's disk has {free:.1f} GB free, short of {need:.1f} GB"]
     return []
 
 

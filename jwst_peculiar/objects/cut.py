@@ -29,8 +29,10 @@ from photutils.aperture import CircularAperture, aperture_photometry
 from photutils.background import Background2D, MedianBackground
 from photutils.segmentation import SourceCatalog, deblend_sources, detect_sources
 from PIL import Image
+import requests
 from scipy.ndimage import map_coordinates, maximum_filter
 
+from jwst_peculiar.catalogues import PatientSession
 from jwst_peculiar.objects import compact, written
 from jwst_peculiar.objects.flags import blobs, flags, grid, stamp_pixels
 from jwst_peculiar.prep import asinh_to_uint8, wcs_record
@@ -311,9 +313,13 @@ def gaia_stars(cfg: Config, name: str, t: pd.DataFrame) -> pd.DataFrame:
     q = f"SELECT {fields} FROM {src} WHERE phot_g_mean_mag < 21 AND {where}"  # noqa: S608 only numbers go in
     try:
         got: pd.DataFrame = (
-            pyvo.dal.TAPService(GAIA_TAP).run_sync(q).to_table().to_pandas()
+            pyvo.dal
+            .TAPService(GAIA_TAP, session=PatientSession())
+            .run_sync(q)
+            .to_table()
+            .to_pandas()
         )
-    except (pyvo.dal.DALServiceError, pyvo.dal.DALQueryError) as err:
+    except (pyvo.dal.DALAccessError, requests.RequestException) as err:
         msg = f"Couldn't query Gaia for {name} ({err}). Set gaia: false to skip spikes."
         raise SystemExit(msg) from err
     cache.parent.mkdir(parents=True, exist_ok=True)

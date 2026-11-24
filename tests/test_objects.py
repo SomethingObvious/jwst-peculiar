@@ -17,7 +17,7 @@ from jwst_peculiar.bundle import add_site_meta, export, save_verdict
 from jwst_peculiar.objects import Config, read_config, written
 from jwst_peculiar.objects.check import report
 from jwst_peculiar.objects.compact import dark_middle, one_band, one_pair, sharp
-from jwst_peculiar.objects.cut import Band, N, render
+from jwst_peculiar.objects.cut import Band, N, gaia_stars, render
 from jwst_peculiar.objects.flags import blobs, merged, on_spikes
 from jwst_peculiar.objects.rank import (
     CLASSES,
@@ -326,3 +326,17 @@ def test_an_exported_list_gets_a_social_card(tmp_path: Path) -> None:
     assert "The 1 oddest objects in test rank" in page
     with Image.open(site / "social.png") as card:
         assert card.size == (1200, 630)
+
+
+def test_cut_stops_with_the_way_round_when_gaia_is_down(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import pyvo
+
+    def broken(*args: object, **kwargs: object) -> None:
+        raise pyvo.dal.DALFormatError(Exception())
+
+    monkeypatch.setattr(pyvo.dal, "TAPService", broken)
+    cfg = Config(name="t", out=tmp_path, pattern="{field}_{band}.fits")
+    with pytest.raises(SystemExit, match="Set gaia: false to skip spikes"):
+        gaia_stars(cfg, "a", offsets([0.0], [0.0]))

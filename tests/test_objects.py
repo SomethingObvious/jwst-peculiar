@@ -16,7 +16,14 @@ from sklearn.linear_model import LogisticRegression
 from jwst_peculiar.bundle import add_site_meta, export, save_verdict
 from jwst_peculiar.objects import Config, read_config, written
 from jwst_peculiar.objects.check import report
-from jwst_peculiar.objects.compact import dark_middle, one_band, one_pair, sharp
+from jwst_peculiar.objects.compact import (
+    BANDS,
+    dark_middle,
+    near_edge,
+    one_band,
+    one_pair,
+    sharp,
+)
 from jwst_peculiar.objects.cut import Band, N, gaia_stars, photometry, render
 from jwst_peculiar.objects.flags import blobs, merged, on_spikes
 from jwst_peculiar.objects.init import guess, split_name
@@ -382,3 +389,13 @@ def test_photometry_drops_cover_where_a_band_has_no_pixels() -> None:
     blank = np.array([[RA0 + d, DEC0 + d] for d in np.linspace(-2e-4, 2e-4, 9)])
     photometry(t, band(np.zeros((60, 60), np.float32) + 1), name="f444w", blank=blank)
     assert t.cover.tolist() == [True, False]
+
+
+def test_a_compact_candidate_near_a_mosaic_edge_is_flagged() -> None:
+    img = np.ones((200, 200), np.float32)
+    img[:, :20] = np.nan
+    b = band(img)
+    x = np.array([30.0, 100.0, 196.0])
+    ra, dec = b.wcs.pixel_to_world_values(x, np.full(3, 100.0))
+    t = pd.DataFrame({"ra": ra, "dec": dec})
+    assert near_edge(t, dict.fromkeys(BANDS, b)).tolist() == [True, False, True]

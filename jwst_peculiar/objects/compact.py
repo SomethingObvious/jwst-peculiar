@@ -7,6 +7,8 @@ there, as little red dots and brown dwarfs are brightest in F444W. Each gets the
 tests as `flag_*` columns.
 
 - `uncovered`: an aperture reaches uncovered sky.
+- `edge`: uncovered sky within 1" in any band, where a mosaic's edge has fewer
+  exposures and more noise.
 - `one_band`: under 3 sigma in all but one band in the 0.1" aperture, or a one-band
   peak, its best band at S/N 10 or more and every other under max(4, a twentieth).
 - `sharp`: more of its flux in 0.1" than a star has, by 3 sigma in one band or
@@ -38,6 +40,7 @@ import astropy.units as u
 from astropy.wcs import WCS
 import numpy as np
 import pandas as pd
+from photutils.aperture import CircularAperture, aperture_photometry
 from PIL import Image
 from scipy.spatial import cKDTree
 from scipy.special import logsumexp
@@ -73,6 +76,7 @@ SEEN, UNSEEN = 5.0, 2.0
 DARK_SEEN, DARK = 3.0, 1.0
 POINT, HALO_REACH, HALO_RATIO = 0.3, 2.0, 20.0
 NEG_SIG, APERTURE, BLOCK = 5.0, 0.25, 1.5
+EDGE = 1.0
 COMPONENTS = 20
 LIST, STAMPS = "compact.csv", "compact_stamps.npy"
 TILE, CUTOUT = 112, 2.4
@@ -221,6 +225,27 @@ def bad_pixel(t: pd.DataFrame, bands: dict[str, Band], lone: pd.DataFrame) -> Bo
     return out
 
 
+def near_edge(t: pd.DataFrame, bands: dict[str, Band]) -> Bools:
+    """Return which candidates have uncovered sky within 1" in any band.
+
+    Uncovered means NaN, exactly 0 or off the end of the mosaic's array.
+
+    Returns:
+        One flag per candidate.
+    """
+    out = np.zeros(len(t), bool)
+    for b in BANDS:
+        band = bands[b]
+        off = (~np.isfinite(band.raw) | (band.raw == 0)).astype(np.float32)
+        xy = np.column_stack(band.pixels(t.ra.to_numpy(float), t.dec.to_numpy(float)))
+        r = EDGE / band.scale
+        ny, nx = off.shape
+        inside = (xy - r >= 0).all(axis=1) & (xy[:, 0] + r < nx) & (xy[:, 1] + r < ny)
+        hit = aperture_photometry(off, CircularAperture(xy, r))["aperture_sum"]
+        out |= ~inside | ~(np.asarray(hit, float) == 0)
+    return out
+
+
 def compact_flags(  # noqa: PLR0913 every test needs its own input
     t: pd.DataFrame,
     bands: dict[str, Band],
@@ -233,6 +258,7 @@ def compact_flags(  # noqa: PLR0913 every test needs its own input
 ) -> None:
     """Add every compact test to `t` as a `flag_*` column."""
     t["flag_uncovered"] = ~t.cover.to_numpy(bool)
+    t["flag_edge"] = near_edge(t, bands)
     t["flag_one_band"] = one_band(t)
     t["flag_sharp"] = sharp(t)
     t["flag_one_pair"] = one_pair(t)

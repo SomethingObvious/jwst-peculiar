@@ -50,7 +50,6 @@ from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.nddata import Cutout2D
 import astropy.units as u
-from astropy.wcs import WCS
 import numpy as np
 import pandas as pd
 from photutils.aperture import CircularAperture, aperture_photometry
@@ -58,6 +57,7 @@ from PIL import Image
 from scipy.spatial import cKDTree
 from scipy.special import logsumexp
 
+from jwst_peculiar.objects import sky_wcs
 from jwst_peculiar.objects.flags import (
     DETECTED,
     MIN_BANDS,
@@ -134,8 +134,8 @@ def blue_star(t: pd.DataFrame) -> Bools:
         One flag per candidate.
     """
     f150, f277, f444 = (t[f"f_{b}_10"].to_numpy(float) for b in BANDS[1:])
-    point = t.f_f150w_10.to_numpy(float) / t.f_f150w_25.to_numpy(float)
     with np.errstate(divide="ignore", invalid="ignore"):
+        point = f150 / t.f_f150w_25.to_numpy(float)
         early, late = f150 / f277, f277 / f444
     return np.asarray(
         (point >= STAR_POINT[0])
@@ -550,7 +550,7 @@ def stamps(cfg: Config, top: pd.DataFrame) -> Any:  # noqa: ANN401 uint8 tiles
         ]
         try:
             hdus = {
-                b: (h[cfg.hdu].data, WCS(h[cfg.hdu].header).celestial)
+                b: (h[cfg.hdu].data, sky_wcs(h[cfg.hdu].header))
                 for b, h in zip(BANDS, opened, strict=True)
             }
             for i in rows:

@@ -24,9 +24,10 @@ import math
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+import warnings
 
 from astropy.io import fits
-from astropy.wcs import WCS
+from astropy.wcs import WCS, FITSFixedWarning
 import numpy as np
 import yaml
 
@@ -83,9 +84,20 @@ def split_tile(name: str) -> tuple[str, tuple[int, int] | None]:
     return field, (int(row), int(col))
 
 
+def sky_wcs(header: Any) -> Any:  # noqa: ANN401 astropy has no types
+    """Return a header's celestial WCS, without astropy's notes on fixing it.
+
+    JWST headers get their dates and observatory place filled in on every read,
+    a line each per band per field, and none of it matters for positions.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FITSFixedWarning)
+        return WCS(header).celestial
+
+
 def _box(header: Any, ra: Any, dec: Any) -> Box:  # noqa: ANN401 astropy has no types
     # the pixels of one band that cover the sky corners given, clipped to its image
-    x, y = WCS(header).celestial.all_world2pix(ra, dec, 0)
+    x, y = sky_wcs(header).all_world2pix(ra, dec, 0)
     nx, ny = int(header["NAXIS1"]), int(header["NAXIS2"])
     # starting on a multiple of the background mesh keeps a tile's sky the field's
     x0 = max(0, math.floor(float(x.min())) // MESH * MESH)
@@ -139,7 +151,7 @@ class Config:
         core = self.core(name)
         if core is None:
             return None
-        det = WCS(self._header(name, self.detect)).celestial
+        det = sky_wcs(self._header(name, self.detect))
         pad = OVERLAP / float(
             np.sqrt(abs(np.linalg.det(det.pixel_scale_matrix))) * 3600
         )

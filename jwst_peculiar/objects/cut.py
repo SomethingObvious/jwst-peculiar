@@ -21,12 +21,14 @@ from dataclasses import dataclass
 import json
 import os
 from typing import TYPE_CHECKING, Any
+import warnings
 
 from astropy.convolution import Gaussian2DKernel, convolve
 from astropy.io import fits
-from astropy.wcs import WCS
+from astropy.utils.exceptions import AstropyUserWarning
 import numpy as np
 import pandas as pd
+import photutils
 from photutils.aperture import CircularAperture, aperture_photometry
 from photutils.background import Background2D, MedianBackground
 from photutils.segmentation import SourceCatalog, deblend_sources, detect_sources
@@ -39,6 +41,7 @@ from jwst_peculiar.objects import (
     MESH,
     compact,
     memory_size,
+    sky_wcs,
     written,
 )
 from jwst_peculiar.objects.flags import blobs, flags, grid, stamp_pixels
@@ -55,6 +58,10 @@ if TYPE_CHECKING:
 
     Floats = npt.NDArray[np.float64]
     Bools = npt.NDArray[np.bool_]
+
+# photutils 3.1 deprecates progress_bar, and before that a bar shows without it
+NEW_PHOTUTILS = tuple(map(int, photutils.__version__.split(".")[:2])) >= (3, 1)
+QUIET: dict[str, Any] = {} if NEW_PHOTUTILS else {"progress_bar": False}
 
 N = 224
 MIN_HALF, SIZE, Q = 0.6, 3.5, 8.0
@@ -111,7 +118,7 @@ def read_band(path: Path, hdu: int | str, box: Box | None = None) -> Band:
         SystemExit: When the mosaic can't be read, usually as it's cut short.
     """
     raw, header = _read(path, hdu, box)
-    wcs = WCS(header).celestial
+    wcs = sky_wcs(header)
     off = ~np.isfinite(raw) | (raw == 0)
     z = np.where(off, 0, raw).astype(np.float32)
     bkg = Background2D(
@@ -147,15 +154,18 @@ def detect(band: Band) -> tuple[pd.DataFrame, npt.NDArray[np.int32]]:
     """
     off = np.isnan(band.data)
     det = np.nan_to_num(band.data)
-    smooth = convolve(det, Gaussian2DKernel(2 / 2.355), mask=off, normalize_kernel=True)
+    with warnings.catch_warnings():
+        # the uncovered area stays NaN after smoothing, and `off` masks it anyway
+        warnings.simplefilter("ignore", AstropyUserWarning)
+        smooth = convolve(
+            det, Gaussian2DKernel(2 / 2.355), mask=off, normalize_kernel=True
+        )
     seg = detect_sources(smooth, 1.5 * band.rms, 10, mask=off)
     if seg is None:
         msg = "Found no sources at all in this field. Is the detect band right?"
         raise SystemExit(msg)
     parent = seg.data.copy()
-    seg = deblend_sources(
-        smooth, seg, 10, n_levels=32, contrast=0.005, progress_bar=False
-    )
+    seg = deblend_sources(smooth, seg, 10, n_levels=32, contrast=0.005, **QUIET)
     cat = SourceCatalog(det, seg, convolved_data=smooth, error=band.rms, mask=off)
     cols = ["label", "x_centroid", "y_centroid", "area", "semimajor_axis"]
     cols += ["semiminor_axis", "segment_flux", "segment_flux_err", "max_value"]

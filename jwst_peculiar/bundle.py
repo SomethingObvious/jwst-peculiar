@@ -17,7 +17,7 @@ import math
 from pathlib import Path
 import re
 import shutil
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
 
 from astropy.wcs import WCS
 import numpy as np
@@ -114,6 +114,42 @@ def map_path(maps_dir: Path, key: str) -> Path:
     """
     # Same rule as detection's _save_maps, as tile stems are full of RA and Dec dots.
     return maps_dir / f"{Path(key).with_suffix('')}.npy"
+
+
+class Keyed(Protocol):
+    """Anything shown as a tile, which verdicts are filed under by key."""
+
+    @property
+    def key(self) -> str:
+        """Return what the tile's verdict is filed under."""
+        ...
+
+
+class Served(Protocol):
+    """What the viewer's server and `export` need from a bundle."""
+
+    @property
+    def run_dir(self) -> Path:
+        """Return the folder verdicts.csv is saved in."""
+        ...
+
+    @property
+    def index(self) -> dict[str, Any]:
+        """Return index.json as a dict."""
+        ...
+
+    @property
+    def tiles(self) -> Sequence[Keyed]:
+        """Return the tiles, in index order."""
+        ...
+
+    def read(self, path: str) -> tuple[bytes, str]:
+        """Return one viewer path's bytes and content type."""
+        ...
+
+    def paths(self) -> Iterator[str]:
+        """Yield every path the viewer can ask for."""
+        ...
 
 
 @dataclass
@@ -599,7 +635,7 @@ def save_verdict(  # noqa: PLR0917 the server passes all five positionally
 
 
 def export(
-    bundle: RunBundle,
+    bundle: Served,
     out_dir: Path,
     app_dir: Path | None = None,
     *,

@@ -55,6 +55,11 @@ COMMANDS = {
         "main",
         "Rank objects already known to be in the field.",
     ),
+    "objects": (
+        "jwst_peculiar.objects",
+        "main",
+        "Find odd objects: cut, embed, rank, like, view and label.",
+    ),
     "unzip": (
         "jwst_peculiar.unzip",
         "main",

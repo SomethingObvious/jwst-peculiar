@@ -671,7 +671,12 @@ class MosaicInfo:
     plane_records: Sequence[dict[str, Any]] | None = None
 
 
-def _wcs_record(wcs: SkyWcs) -> tuple[dict[str, Any], float]:
+def wcs_record(wcs: SkyWcs) -> tuple[dict[str, Any], float]:
+    """Return a WCS as the header cards the viewer reads, and its pixel scale.
+
+    Returns:
+        The cards, and arcseconds per pixel.
+    """
     cd = np.diag(wcs.wcs.cdelt) @ wcs.wcs.get_pc()
     record = {
         "CTYPE1": wcs.wcs.ctype[0],
@@ -724,7 +729,7 @@ def describe_mosaic(
         "filters": [f.upper() for f in info.filters],
     }
     if mosaic.wcs is not None:
-        meta["wcs"], meta["pixel_scale_arcsec"] = _wcs_record(mosaic.wcs)
+        meta["wcs"], meta["pixel_scale_arcsec"] = wcs_record(mosaic.wcs)
     meta["header"] = _header_cards(info.headers)
     if mosaic.bunit:
         meta["bunit"] = mosaic.bunit

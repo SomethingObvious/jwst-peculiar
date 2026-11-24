@@ -1,6 +1,6 @@
 # Plan for the Object Pipeline
 
-The tile searches in [search.md](search.md) and [minerva.md](minerva.md) came back empty, and their top tiles were mostly spikes, trails and seams. The pipeline here works per object instead, and its code joins the package once it passes the steps below.
+The tile searches in [search.md](search.md) and [minerva.md](minerva.md) came back empty, and their top tiles were mostly spikes, trails and seams. The pipeline here works per object instead, and since step 6 it is the package's main search, run as `jwst-peculiar objects`.
 
 This fixes how every change to the object pipeline gets judged, written on 2026-11-22 before any change to the prototype was made. The prototype detects sources on F277W, cuts one 224 px stamp per object scaled to its own size and brightness (F277W, F150W and F115W as red, green and blue), and embeds it with Zoobot's convnext_nano, averaged over 8 turns and mirrors. Rarity is the cosine distance to the fifth nearest object that shares no sky with it.
 
@@ -93,3 +93,186 @@ It took three tries. The first version tested one-band peaks against quiet sky a
 ## Step 3, Making It Good
 
 The goal for the finished pipeline, judged once on the test block, is a top 100 where at least 50 are worth a second look and at most 5 are artefacts. Step 3 starts by building a list of known odd objects from published catalogues (little red dots, jellyfish and ram-pressure galaxies, collisional rings, dusty edge-on disks, strong mergers and brown dwarfs, as well as lenses), split between the development and test sets by where they sit. Its recall bar goes into this file before any lever is tried.
+
+### The Known Odd Objects
+
+The held-out list comes from published catalogues and is matched to the catalogue within 0.6".
+
+| Class | Source | Listed | In COSMOS-Web | In the prototype catalogue | Development | Test |
+|---|---|---|---|---|---|---|
+| Little red dots | Akins et al. 2025 | 434 | 429 | 4 | 4 | 0 |
+| Brown dwarfs | Chen et al. 2025 | 27 | 27 | 0 | 0 | 0 |
+| Rings | Galaxy Zoo: Hubble, COSMOS | 260 | 97 | 88 | 79 | 9 |
+| Mergers | Galaxy Zoo: Hubble, COSMOS | 1,715 | 596 | 527 | 451 | 76 |
+| Dusty edge-on disks | Galaxy Zoo: Hubble, COSMOS | 114 | 41 | 36 | 30 | 6 |
+| Arcs | Galaxy Zoo: Hubble, COSMOS | 24 | 11 | 7 | 5 | 2 |
+| Disturbed | Galaxy Zoo: Hubble, COSMOS | 10 | 1 | 1 | 1 | 0 |
+| Lenses | the suite's list | 449 | 444 | 427 | 352 | 75 |
+
+A Galaxy Zoo: Hubble galaxy counts when at least half its volunteers called it odd, at least 10 answered the odd-feature question, and at least half of those picked the feature. A dusty edge-on disk also needs at least half voting edge-on and at least half for a dust lane. No COSMOS-Web catalogue of jellyfish or ram-pressure galaxies has been published, so that class is empty.
+
+An odd object counts as found at K when a system ranked K or better holds an object whose stamp centre is within `max(1", half)` of it. Recall is the share found within the top 1% and the top 5% of systems, over every class but lenses (lenses already have their own test).
+
+| Recall, all classes but lenses | Prototype | Step 2 |
+|---|---|---|
+| Kept in the list | 570 of 570 | 489 of 570 |
+| Found in the top 1% | 0.291 | 0.239 |
+| Found in the top 5% | 0.637 | 0.523 |
+
+Step 2 cost about a seventh of the known odd objects. Most were mergers and rings with a large stamp that a hot pixel, a spike or a catalogued star happened to cross, and the whole object was dropped for it. The point-like classes barely reach the catalogue at all, since it keeps only resolved objects at S/N over 40.
+
+### Step 3 Bars
+
+Every lever is judged on the development set against the version adopted at the time. On top of the four bars above, it must keep the top 5% recall over all classes but lenses within 0.03 of the adopted version's, and no class with 20 or more development members may fall by more than 0.05 there. A lever is kept when it passes those and improves at least one of the top 1% recall, the artefact count or the number worth a second look in the top 100.
+
+The goal for the finished pipeline, judged once on the test block, is this.
+
+1. At least 50 of the top 100 worth a second look, and at most 5 artefacts.
+2. Over all classes but lenses, at least 0.35 found in the top 1% of systems and at least 0.70 in the top 5%.
+3. At least half of the listed little red dots and brown dwarfs that fall in development are in the catalogue, so that the point-like classes can be found at all. That part is judged on development, since the test block holds none of them.
+
+### Step 3 Result
+
+Each lever was judged once on development against the version adopted at the time, and only labels won.
+
+| Lever | Infinity, o091 and development rank | Hard seed | Recall, top 1% and top 5% | Top 100, A N O I | Verdict |
+|---|---|---|---|---|---|
+| Step 2 | 3, 252 | 37 | 0.239, 0.523 | 4, 64, 18, 14 | the base |
+| Rarity among size and brightness peers | 70 in o091 | | 0.023, 0.147 | | fails the first bar |
+| Clean stamps, brighter segments refilled | 2, 80 | 34 | 0.286, 0.539 | 9, 13, 51, 27 | fails on artefacts |
+| Clean stamps, touching segments kept | 2, 254 | 39 | 0.254, 0.560 | 7, 66, 14, 13 | fails on artefacts |
+| Clean stamps, blob-centred objects dropped | 2, 80 | 34 | 0.286, 0.539 | 8, 13, 52, 27 | fails on artefacts |
+| F444W, F277W, F150W stamps joined | 2, 357 | 7 | 0.198, 0.484 | | fails on recall |
+| Zoobot convnext_small | 19, 1,292 | 2,256 | 0.216, 0.449 | | fails |
+| Zoobot convnext_base | 9, 846 | 1 | 0.209, 0.449 | | fails on recall |
+| Labels, training objects left out | 2, 132 | 37 | 0.232, 0.512 | 2, 8, 62, 28 | adopted |
+
+Labels work by putting a logistic regression (C 0.1, classes balanced) on the nano embeddings, which learns artefact or neighbour-dominated against the rest from the eye labels, and the score becomes `rarity * (1 - p_bad)`. Its cross-validated AUC on the first 102 labels is only 0.72, but that is enough to take the neighbour-dominated stamps from 64 of the top 100 to 8. Its numbers above are for a ranking with its own training objects left out, labelled fresh. I knew which version I was labelling, though, so there is some room for bias in the 28.
+
+Clean stamps came closest on the number worth a look and failed each time on the cutouts the masking made. A mix of cleaned and uncleaned stamps makes the uncleaned ones rare, so cleaning has to treat every stamp alike, and a refill that stops at a segment's edge leaves a staircase under a big galaxy's halo. The joined long-wave view and convnext_base are worse for rarity but better for search by example (the hard seed comes back 7th and 1st), so they are worth keeping for `like`. The edge rule had never fired before, as these mosaics mark uncovered sky with 0 rather than NaN, and the fix goes forward.
+
+The test block was then run once with the adopted pipeline, with the classifier trained on all 202 development labels and rarity computed among the block's 21,062 systems.
+
+| Goal | Needed | Test block |
+|---|---|---|
+| Worth a second look in the top 100 | at least 50 | 27 |
+| Artefacts in the top 100 | at most 5 | 5 |
+| Recall over all classes but lenses, top 1% | at least 0.35 | 0.280 |
+| Recall over all classes but lenses, top 5% | at least 0.70 | 0.602 |
+| Little red dots and brown dwarfs in the catalogue | at least half | 4 of 434 and 0 of 27 |
+
+It meets the artefact goal and misses the rest. The other 68 are 61 ordinary galaxies and 7 dominated by a neighbour. The artefacts are two low-coverage stamps, two stars and one masked hole. Mergers are found at 0.250 and 0.566, rings at 0.667 and 0.889, and lenses at 0.160 and 0.400. Image rarity alone mostly finds big, bright, well-resolved galaxies, which are rare in a field of small faint ones without being odd, and the catalogue's S/N 40 and area 60 cuts keep almost every point-like object out before ranking starts.
+
+## The Second Test Block
+
+The first test block has had its one run, so a second block of 21 observations was set aside on 2026-11-23 for judging the finished pipeline once more. It is the 21 development observations nearest one picked with seed 1 among those over 15 arcmin from the Infinity galaxy's and from every first-block observation. Those are o021, o023 to o038, o067, o069, o161 and o165, holding 27,753 objects. From here on development leaves out both blocks and anything within 1" of them, which leaves 131,873 objects, and no label on a second-block object trains anything.
+
+On the smaller development set the adopted pipeline (step 2's rules, the nano embeddings and the label weighting) puts the Infinity galaxy 3rd in o091 and 261st overall, finds 0.224 of the known odd objects in the top 1% and 0.507 in the top 5%, and has A 1, N 34, O 46, I 19 in its top 100.
+
+## Step 4, Catalogue Physics
+
+Step 4 measures four-band photometry for every F277W segment, the same detection as the prototype, and adds two things. The first is a physics score for the objects already ranked, from how rare an object's colours are, and a combined score from it and the image score. The image-only score stays available. The second is a compact branch, the segments the prototype's size and S/N cuts throw out, ranked on physics alone, which is where little red dots and brown dwarfs live.
+
+### Step 4 Bars
+
+The combined score is judged on development against the adopted pipeline with the step 3 bars, so it has to pass the four bars, keep the top 5% recall within 0.03 with no class of 20 or more falling by over 0.05, and improve the top 1% recall, the artefact count or the number worth a look.
+
+The compact branch is judged on development by these.
+
+1. At least half of the development little red dots and brown dwarfs are in its catalogue.
+2. At least half of those in its catalogue are found in its top 5%.
+3. At most 10 artefacts in its top 100, as compact sources are where hot pixels and snowballs end up.
+
+The goal for the finished pipeline on the second block is the step 3 goal, with the little red dot and brown dwarf part judged on the compact branch.
+
+### Step 4 Result
+
+Before the photometry finished, a three-class classifier (bad, ordinary and worth a look) on the nano embeddings was trained on 379 development labels, 200 of them drawn at random from places 101 to 2,000, and scored as `rarity * p(worth a look)`. It was judged on development against the adopted pipeline with the step 3 bars and adopted.
+
+| Version | Infinity, o091 and development rank | Recall, top 1% and top 5% | Top 100, A N O I | Verdict |
+|---|---|---|---|---|
+| Two-class labels, the base | 3, 261 | 0.224, 0.507 | 1, 34, 46, 19 | the base |
+| Three-class labels | 1, 90 | 0.269, 0.558 | 1, 4, 15, 80 | adopted |
+| Three-class labels and physics, combined | 1, 263 | 0.213, 0.449 | | fails on recall |
+
+The top 100s are ranked with every labelled object left out and labelled fresh. The combined score adds colour rarity by Fisher's method and loses mergers (0.579 to 0.441 at the top 5%) and rings (0.500 to 0.339), though it lifts dusty edge-on disks from 0.080 to 0.440 at the top 1%. The image score stays as it is.
+
+| Compact branch bar | Needed | Development |
+|---|---|---|
+| Little red dots and brown dwarfs in its catalogue | at least half | 164 of 328 |
+| Of those, found in its top 5% | at least half | 161 of 164 |
+| Artefacts in its top 100 | at most 10 | 23 in the first 40 |
+
+The compact branch fails on artefacts. Ten are clumps of strongly negative pixels in one band, which aren't NaN or 0 and so pass the coverage test, ten are cosmic rays or hot pixels the 0.1" aperture test misses when a faint galaxy lies under them, and three look like moving objects. The two proposed changes are to count pixels more than 5 sigma below the local sky within the 0.25" aperture as bad, and to use step 2's pixel-level blob rule on compact candidates in place of the aperture test.
+
+### Step 4, Second Round
+
+The two proposed changes went in along with anything else that looked like it would help. These were all tried on development, with rules chosen while looking at development sheets, so the second block stays the only fair judge.
+
+A three-class model refit on 764 development labels (200 more drawn at random from places 101 to 2,000) puts the Infinity galaxy 71st but drops rings at the top 5% from 0.500 to 0.371, so the adopted model stays.
+
+The compact branch now also detects in F444W, keeping sources not already on an F277W segment of S/N 10 or more, which finds 143 of the 145 development little red dots and brown dwarfs that had no F277W segment. On top of step 2's rules it drops a candidate when
+
+1. a pixel more than 5 sigma below the sky, or a lone peak by step 2's blob rule in any band, lies within 0.25" plus 1.5 of that band's pixels,
+2. it is sharper than a star, its 0.1" to 0.25" flux ratio over the 99th percentile of 742 Gaia stars (0.88, 0.865, 0.70 and 0.61 from F115W to F444W) by 3 sigma in one band or combined,
+3. it shows in only one of NIRCam's two exposure pairs (F115W with F277W, F150W with F444W),
+4. a band between two detected ones is under S/N 1, or
+5. it is a catalogued star brighter in F150W than F444W, or lies within 2" of a catalogued star 20 times brighter in F277W.
+
+| Compact branch bar | Needed | Development |
+|---|---|---|
+| Little red dots and brown dwarfs in its catalogue | at least half | 236 of 328 |
+| Of those, found in its top 5% | at least half | 233 of 236 |
+| Artefacts in its top 100 | at most 10 | 32 |
+
+It still fails on artefacts: 5 stars, 9 faint noise peaks near bright sources, 11 stripes, trails, ghosts and wisps, and 6 cosmic rays or hot pixels. Its top 100 has 58 worth a look, nearly all red point sources, 18 of them in the published lists.
+
+### Step 6 Result
+
+The pipeline is now `jwst-peculiar objects cut|embed|rank|like|label|view|compact`, driven by one YAML config. On all 148 COSMOS-Web fields `cut` took 2 hours 10 minutes on the laptop's CPU and `embed` 27 minutes on its GPU. Its detection is the prototype's to the pixel (same labels, positions and fluxes), and it keeps 99.4% of the same objects as the research version. Most of the rest comes from two research bugs it doesn't have: in some fields research re-ran detection and looked parents up by label, which gave pieces the wrong parent for the merge rule, and its edge test flagged zero-valued pixels from an earlier copy of the mosaics that the current files don't have.
+
+`compact` reproduces the research compact branch. On o001 the same 1,834 F277W candidates pass, 8 differ at an S/N 3 threshold because the blank-sky positions behind the noise factor are drawn differently (fluxes are identical), and 35 of 36 F444W sources match.
+
+From here the package is the reference. On development, with `objects label` fitted on the same 378 labels the adopted model was chosen with, it scores as follows.
+
+| Development | Research version | Package |
+|---|---|---|
+| Infinity, o091 and development rank | 1, 90 | 2, 108 |
+| Seeds, four easy and the hard one | 1, 1, 1, 1, 35 | 1, 1, 1, 1, 35 |
+| Lenses listed and good | 267, 53 | 265, 52 |
+| Recall, top 1% and top 5% | 0.269, 0.558 | 0.269, 0.560 |
+| Top 100 with training objects left out, A N O I | 1, 4, 15, 80 | 1, 8, 21, 70 |
+| Compact, little red dots and brown dwarfs in its catalogue | 236 of 328 | 238 of 330 |
+| Compact, of those in its top 5% | 233 | 235 |
+| Compact, top 100 A O I | 32, 10, 58 | 30, 9, 61 |
+
+70 of the package's top 100 carried labels from earlier lists and 30 were labelled fresh, and the fresh ones came out worth a look less often, so some of that gap is labelling rather than ranking.
+
+## The Final Run, Fixed Before It Happens
+
+This was written on 2026-11-23, before anything has run on the second block, and it doesn't change after.
+
+1. What runs. The package's `objects` commands as committed with step 6, unchanged between the development numbers below and the run. The main list uses the label model `objects label` fits on the 378 development labels the adopted model was chosen with (the 200 drawn at random from places 101 to 2,000 and the top 100s labelled before step 4's second round). The second batch of 200 isn't used, as the model fitted with it failed on rings. The compact list uses the rules in step 4's second round.
+2. How it runs. A config lists the block's 21 observations, so rarity is among the block's own systems as in the first block's run, and the compact mixture is fitted to the block's own candidates, as anyone running it on their own survey would. `objects rank` writes the top 100 systems and `objects compact` the top 100 compact candidates.
+3. How it's labelled. Both top 100s go into one list, shuffled with seed 2 and with rank and score taken off, and I label all 200 from numbered contact sheets with the rubric used so far (worth a look, ordinary, artefact). The two kinds still look different, as a compact candidate gets a four-panel tile, so which list an object came from isn't hidden. A second labeller labels 50 of them, drawn with seed 3, in the viewer from a run folder of their own, without seeing mine, and the agreement goes in the report beside the result.
+4. What it's judged on. The main list has the step 3 goal: at least 50 worth a look and at most 5 artefacts in its top 100, and over all classes but lenses at least 0.35 of the known odd objects in the top 1% of systems and 0.70 in the top 5%. The compact list has its three bars: at least half the block's listed little red dots and brown dwarfs in its catalogue, at least half of those in its top 5%, and at most 10 artefacts in its top 100. A known odd object counts as worth a look.
+5. After it. The numbers are reported as they come out, nothing is tuned on the block, and it isn't run again.
+
+### The Final Run
+
+It ran once on 2026-11-23 as fixed above, with the label model's file hashed before the run (sha256 starting 4e80acaa). The block has 27,753 objects, 24,342 systems after the flags, and 61,911 compact candidates of which 42,046 pass the compact tests. The 200 were labelled blind before the key was opened.
+
+| Goal | Needed | Second block |
+|---|---|---|
+| Worth a second look in the main top 100 | at least 50 | 57 (43 as labelled, plus 14 known odd objects labelled ordinary or neighbour) |
+| Artefacts in the main top 100 | at most 5 | 0 |
+| Recall over all classes but lenses, top 1% | at least 0.35 | 0.407 |
+| Recall over all classes but lenses, top 5% | at least 0.70 | 0.593 |
+| Listed little red dots and brown dwarfs in the compact catalogue | at least half | 0 of 2 |
+| Artefacts in the compact top 100 | at most 10 | 48 |
+
+The main list meets three of its four goals and misses the top 5% recall. Mergers are found at 0.441 and 0.624, rings at 0.294 and 0.588, and lenses only at 0.016 and 0.234. The other 43 in its top 100 are 34 ordinary galaxies and 9 dominated by a neighbour, with no artefacts at all, where the first block's run had 5.
+
+The compact list fails. Its top 100 has 31 worth a look, nearly all red point sources, 21 ordinary and 48 artefacts: 19 are bands of striping across the short-wave images, which this block has far more of than development did, 21 are noise, 3 are stars, and the rest are edges, a hot pixel, a spike and a wisp. The block holds only 2 listed little red dots, and neither is in the compact catalogue, so its first two bars can't really be judged here. The development numbers (238 of 330 in the catalogue, 235 of them in the top 5%) are the better guide to recall, and the artefact rate here is the honest guide to how much cleaning its list needs.
+
+There's no second labeller's check. The planned 50 weren't labelled, so the top 100 counts above rest on one labeller's judgement, while the recall figures come from published catalogues and don't depend on it.

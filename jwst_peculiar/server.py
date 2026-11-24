@@ -24,7 +24,7 @@ import webbrowser
 
 from typing_extensions import override
 
-from jwst_peculiar.bundle import RunBundle, add_site_meta, export, save_verdict
+from jwst_peculiar.bundle import RunBundle, Served, add_site_meta, export, save_verdict
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ mimetypes.add_type("text/javascript", ".js")
 
 
 class _ViewerHandler(BaseHTTPRequestHandler):
-    bundle: ClassVar[RunBundle]
+    bundle: ClassVar[Served]
     lock: ClassVar[threading.Lock]
     # Seconds a request may stall, so a body shorter than its Content-Length can't
     # hold a thread forever.
@@ -158,7 +158,7 @@ class _ViewerHandler(BaseHTTPRequestHandler):
             )
 
 
-def make_handler(bundle: RunBundle) -> type[BaseHTTPRequestHandler]:
+def make_handler(bundle: Served) -> type[BaseHTTPRequestHandler]:
     """Return a request handler class that serves `bundle` and the viewer."""
 
     class Handler(_ViewerHandler):
@@ -207,27 +207,51 @@ def _parser() -> argparse.ArgumentParser:
     return ap
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Serve the run in a browser, or export it as a static site with --export.
+def built_viewer() -> Path:
+    """Return the folder of the built viewer.
 
     Returns:
-        The exit code, which is always 0.
+        APP_DIR.
 
     Raises:
         SystemExit: If the viewer hasn't been built.
     """
-    args = _parser().parse_args(argv)
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
-
     if not (APP_DIR / "index.html").is_file():
         msg = (
             f"The viewer isn't built, as {APP_DIR / 'index.html'} is missing. "
             "Run `npm ci && npm run build` in web/."
         )
         raise SystemExit(msg)
+    return APP_DIR
+
+
+def serve(bundle: Served, *, port: int, browser: bool) -> None:
+    """Serve `bundle` and the viewer on localhost until Ctrl+C."""
+    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(bundle))
+    url = f"http://127.0.0.1:{server.server_port}/"
+    logger.info("Serving %d tiles at %s, Ctrl+C to stop", len(bundle.tiles), url)
+    if browser:
+        webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Serve the run in a browser, or export it as a static site with --export.
+
+    Returns:
+        The exit code, which is always 0.
+    """
+    args = _parser().parse_args(argv)
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
+    app = built_viewer()
     bundle = RunBundle(args.run_dir, args.data_root, writable=args.export is None)
     if args.name:
         index: dict[str, Any] = bundle.index
@@ -236,23 +260,12 @@ def main(argv: list[str] | None = None) -> int:
         index["run"]["name"] = args.name
 
     if args.export is not None:
-        n = export(bundle, args.export, APP_DIR, cutouts=args.cutouts)
+        n = export(bundle, args.export, app, cutouts=args.cutouts)
         if args.site_url:
             add_site_meta(bundle, args.export, args.site_url)
         logger.info("Wrote the viewer and %d run files to %s", n, args.export)
         return 0
-
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(bundle))
-    url = f"http://127.0.0.1:{server.server_port}/"
-    logger.info("Serving %d tiles at %s, Ctrl+C to stop", len(bundle.tiles), url)
-    if args.browser:
-        webbrowser.open(url)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.server_close()
+    serve(bundle, port=args.port, browser=args.browser)
     return 0
 
 

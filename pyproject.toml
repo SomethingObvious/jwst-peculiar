@@ -1,7 +1,7 @@
 [project]
 name = "jwst-peculiar"
 version = "0.5.0"
-description = "Unsupervised anomaly detection on JWST imagery with DINO patch embeddings"
+description = "Finds odd objects in JWST NIRCam mosaics, with artefact tests, Zoobot embeddings and a labelling viewer"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "PolyForm-Noncommercial-1.0.0"
@@ -11,6 +11,7 @@ dependencies = [
   "numpy",
   "torch>=2.8",  # the first release where torch.mm takes out_dtype
   "transformers>=4.56",  # the first release with DINOv3
+  "timm>=1.0",  # loads the Zoobot encoders for `jwst-peculiar objects`
   "huggingface_hub",
   "astropy",
   "reproject",  # puts the NIRCam filters on one grid

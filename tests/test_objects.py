@@ -389,7 +389,7 @@ def test_cut_stops_with_the_way_round_when_gaia_is_down(
         ),
         (
             "jw01727-o001_t001_F444W_sci.fits",
-            ("jw01727-o001_t001", "{field}_{band}_sci.fits", "f444w"),
+            ("jw01727-o001_t001", "{field}_{BAND}_sci.fits", "f444w"),
         ),
         ("notes.fits", None),
     ],
@@ -552,6 +552,18 @@ def test_init_ignores_weight_and_error_maps(tmp_path: Path) -> None:
         for b in BANDS:
             (folder / f"jw01727-o001_t001_{b}_{kind}.fits").touch()
     assert guess(folder)["pattern"] == "m/{field}_{band}_sci.fits"
+
+
+def test_init_keeps_band_names_in_capitals_when_the_files_have_them(
+    tmp_path: Path,
+) -> None:
+    folder = tmp_path / "m"
+    folder.mkdir()
+    for b in BANDS:
+        (folder / f"jw01727-o001_t001_{b.upper()}_sci.fits").touch()
+    keys = guess(folder)
+    assert keys["pattern"] == "m/{field}_{BAND}_sci.fits"
+    assert keys["bands"] == list(BANDS)
 
 
 def mosaic(path: Path, nx: int, ny: int) -> None:

@@ -44,7 +44,8 @@ def split_name(name: str) -> tuple[str, str, str] | None:
     """Split a mosaic's file name into its field, pattern and band.
 
     Returns:
-        The field, the pattern with {field} and {band} in it, and the band, or None
+        The field, the pattern with {field} and {band} (or {BAND}) in it, and the
+        band in lower case, or None
         when the name has no filter in it.
     """
     hits = list(BAND.finditer(name))
@@ -55,7 +56,9 @@ def split_name(name: str) -> tuple[str, str, str] | None:
     field = NOISE.sub("", before.rstrip("-_"))
     if not field:
         return None
-    return field, "{field}" + before[len(field) :] + "{band}" + after, band
+    # {BAND} fills in capitals, for file systems where case matters
+    slot = "{BAND}" if m.group(0).isupper() else "{band}"
+    return field, "{field}" + before[len(field) :] + slot + after, band
 
 
 def _nearest(bands: list[str], microns: float) -> str:
@@ -89,7 +92,8 @@ def _after_band(seen: Seen) -> Seen:
     suf = os.path.commonprefix([n[::-1] for n in names])[::-1]  # noqa: RUF071 as above
     cut = [i for i in (suf.find(c) for c in SEPARATORS) if i >= 0]
     suf = suf[min(cut) :] if cut else ""
-    if "{band}" not in pre + suf or len(pre) + len(suf) >= min(map(len, names)):
+    named = "{band}" in pre + suf or "{BAND}" in pre + suf
+    if not named or len(pre) + len(suf) >= min(map(len, names)):
         return seen
     out: Seen = defaultdict(lambda: defaultdict(set))
     for name, bands in names.items():
@@ -148,7 +152,10 @@ def guess(folder: Path) -> dict[str, object]:
     }
     if len(fields) == 1:
         out["fields"] = list(fields)
-    paths = {b: folder / pattern.format(field=min(fields), band=b) for b in keep}
+    one = min(fields)
+    paths = {
+        b: folder / pattern.format(field=one, band=b, BAND=b.upper()) for b in keep
+    }
     return out | _reading(paths, detect)
 
 

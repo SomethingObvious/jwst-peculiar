@@ -2,7 +2,9 @@
 
 It reads the filter out of each file name (the last `f` and three or four digits
 followed by w, m or n), takes what comes before it, less any `_nircam` or
-`_clear`, as the field, and keeps the bands every field has. The band nearest
+`_clear`, as the field, and keeps the bands every field has. Where the field comes
+after the filter, as in COSMOS-Web DR1's `mosaic_nircam_f277w_COSMOS-Web_60mas_A1`,
+the part of the names that varies is the field. The band nearest
 F277W finds sources and is red, the one nearest F150W is green and the bluest is
 blue. F115W, F150W, F277W and F444W are kept too when there, for the compact list.
 """
@@ -11,14 +13,17 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict
+import os
 from pathlib import Path
 import re
 
+from astropy.io import fits
 import yaml
 
 BAND = re.compile(r"f(\d{3,4})[wmn]2?", re.IGNORECASE)
 COMPACT = ("f115w", "f150w", "f277w", "f444w")
 NOISE = re.compile(r"([-_](nircam|clear))+$", re.IGNORECASE)
+SEPARATORS = "-_."
 
 
 def _microns(band: str) -> float:
@@ -60,14 +65,46 @@ def colours(bands: list[str]) -> tuple[str, str, str]:
     return red, green, blue
 
 
-def _scan(folder: Path) -> dict[str, dict[str, set[str]]]:
-    seen: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+Seen = dict[str, dict[str, set[str]]]
+
+
+def _after_band(seen: Seen) -> Seen:
+    # names that put the field after the filter leave one identical field per pattern
+    names = {
+        p.replace("{field}", f): b for p, fs in seen.items() for f, b in fs.items()
+    }
+    if len(names) < 2 or any(len(fs) > 1 for fs in seen.values()):  # noqa: PLR2004 a pair to compare
+        return seen
+    pre = os.path.commonprefix(list(names))  # noqa: RUF071 names, not paths, character by character
+    pre = pre[: max(pre.rfind(c) for c in SEPARATORS) + 1]
+    suf = os.path.commonprefix([n[::-1] for n in names])[::-1]  # noqa: RUF071
+    cut = [i for i in (suf.find(c) for c in SEPARATORS) if i >= 0]
+    suf = suf[min(cut) :] if cut else ""
+    if "{band}" not in pre + suf or len(pre) + len(suf) >= min(map(len, names)):
+        return seen
+    out: Seen = defaultdict(lambda: defaultdict(set))
+    for name, bands in names.items():
+        out[pre + "{field}" + suf][name[len(pre) : len(name) - len(suf)]] |= bands
+    return out
+
+
+def _scan(folder: Path) -> Seen:
+    seen: Seen = defaultdict(lambda: defaultdict(set))
     for path in sorted(folder.glob("*.fits")):
         got = split_name(path.name)
         if got:
             field, pattern, band = got
             seen[pattern][field].add(band)
-    return seen
+    return _after_band(seen)
+
+
+def _image_hdu(path: Path) -> int:
+    # DJA and JADES mosaics keep the image in the primary HDU, MAST's in the next
+    try:
+        primary = fits.getheader(path, 0)
+    except OSError:
+        return 1
+    return 0 if primary.get("NAXIS") == 2 else 1  # noqa: PLR2004 an image
 
 
 def guess(folder: Path) -> dict[str, object]:
@@ -101,6 +138,8 @@ def guess(folder: Path) -> dict[str, object]:
     }
     if len(fields) == 1:
         out["fields"] = list(fields)
+    if _image_hdu(folder / pattern.format(field=min(fields), band=detect)) == 0:
+        out["hdu"] = 0
     return out
 
 

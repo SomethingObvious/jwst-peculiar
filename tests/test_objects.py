@@ -455,3 +455,33 @@ def test_check_spots_a_mosaic_whose_download_stopped_early(tmp_path: Path) -> No
     assert said == [
         f"{short} is cut short or empty, so its download probably stopped early"
     ]
+
+
+def test_init_finds_every_tile_when_tiles_follow_the_filter(tmp_path: Path) -> None:
+    folder = tmp_path / "m"
+    folder.mkdir()
+    for tile in ("A1", "A10", "B4"):
+        for b in BANDS:
+            (
+                folder / f"mosaic_nircam_{b}_COSMOS-Web_60mas_{tile}_v1.0_i2d.fits"
+            ).touch()
+    keys = guess(folder)
+    assert (
+        keys["pattern"]
+        == "m/mosaic_nircam_{band}_COSMOS-Web_60mas_{field}_v1.0_i2d.fits"
+    )
+    assert "fields" not in keys
+    assert "hdu" not in keys
+
+
+def test_init_points_at_an_image_kept_in_the_primary_hdu(
+    tmp_path: Path,
+) -> None:
+    folder = tmp_path / "m"
+    folder.mkdir()
+    for b in ("f150w", "f277w", "f444w"):
+        name = f"egs-grizli-v7.2-{b}-clear_drc_sci.fits"
+        fits.PrimaryHDU(np.ones((4, 4), np.float32)).writeto(folder / name)
+    keys = guess(folder)
+    assert keys["fields"] == ["egs-grizli-v7.2"]
+    assert keys["hdu"] == 0

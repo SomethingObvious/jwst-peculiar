@@ -6,6 +6,18 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "PolyForm-Noncommercial-1.0.0"
 license-files = ["LICENSE.md"]
+keywords = ["astronomy", "JWST", "NIRCam", "anomaly detection", "little red dots"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering :: Astronomy",
+]
 
 dependencies = [
   "numpy",
@@ -49,6 +61,7 @@ webb = ["stpsf"]
 [project.urls]
 Demo = "https://somethingobvious.github.io/jwst-peculiar/"
 Repository = "https://github.com/SomethingObvious/jwst-peculiar"
+Documentation = "https://github.com/SomethingObvious/jwst-peculiar/blob/main/docs/usage.md"
 
 [project.scripts]
 jwst-peculiar = "jwst_peculiar.cli:main"

@@ -1,6 +1,6 @@
 # jwst-peculiar
 
-[![The viewer on the 17th oddest object in Webb's First Deep Field, a clumpy galaxy at redshift 1.27, with the ranked list on the left and its RA, Dec and verdict buttons on the right](.github/readme/viewer.jpg)](https://somethingobvious.github.io/jwst-peculiar/)
+[![The viewer on the 17th oddest object in Webb's First Deep Field, a clumpy galaxy at redshift 1.27, with the ranked list on the left and its RA, Dec and verdict buttons on the right](https://raw.githubusercontent.com/SomethingObvious/jwst-peculiar/main/.github/readme/viewer.jpg)](https://somethingobvious.github.io/jwst-peculiar/)
 
 jwst-peculiar looks for odd objects in JWST NIRCam mosaics, like mergers, rings, little red dots and the strange things nobody has a name for. It finds every source in a field, drops the ones that are instrument artefacts, embeds a colour stamp of each with Zoobot and ranks them by how unlike every other object they look. Verdicts you give in its viewer train a small classifier that pushes big ordinary galaxies down the list. Sources too small for a stamp get a second list, ranked on their colours. The [demo](https://somethingobvious.github.io/jwst-peculiar/) is its top 100 in Webb's First Deep Field.
 
@@ -8,7 +8,7 @@ On 148 COSMOS-Web fields (185,811 stamps) it took 2 hours 10 minutes on a laptop
 
 ## How Well It Works
 
-It was judged once on 21 COSMOS-Web observations it had never seen, against goals written down before the run, with the top 100 labelled blind by a single labeller with no second check. It had 57 worth a second look and no artefacts. It found 0.41 of the known odd objects in its top 1% of systems and 0.59 in its top 5%, short of the 0.70 goal, mostly as it finds mergers and rings well and lenses badly. The compact list found 235 of 330 known little red dots and brown dwarfs in its top 5% on development fields (295 after later changes to its artefact tests), but about half its top 100 on the held-out block were artefacts. After those changes it was 30 of 100 on development fields, which haven't been judged blind. [objects-plan.md](docs/objects-plan.md) has every goal and result.
+It was judged once on 21 COSMOS-Web observations it had never seen, against goals written down before the run, with the top 100 labelled blind by a single labeller with no second check. It had 57 worth a second look and no artefacts. It found 0.41 of the known odd objects in its top 1% of systems and 0.59 in its top 5%, short of the 0.70 goal, mostly as it finds mergers and rings well and lenses badly. The compact list found 235 of 330 known little red dots and brown dwarfs in its top 5% on development fields (295 after later changes to its artefact tests), but about half its top 100 on the held-out block were artefacts. After those changes it was 30 of 100 on development fields, which haven't been judged blind. [objects-plan.md](https://github.com/SomethingObvious/jwst-peculiar/blob/main/docs/objects-plan.md) has every goal and result.
 
 ## Install and Run
 
@@ -36,11 +36,11 @@ jwst-peculiar objects view survey.yaml
 jwst-peculiar objects label survey.yaml
 ```
 
-`run` checks the config, then cuts, embeds and ranks, and lists the compact sources when the bands allow it. [Usage](docs/usage.md#objects) covers each step on its own and how to label well.
+`run` checks the config, then cuts, embeds and ranks, and lists the compact sources when the bands allow it. [Usage](https://github.com/SomethingObvious/jwst-peculiar/blob/main/docs/usage.md#objects) covers each step on its own and how to label well.
 
 ## Try It on Public Data
 
-[examples/smacs0723.yaml](examples/smacs0723.yaml) runs it on Webb's First Deep Field, which is what the demo shows. The four mosaics are 4.2 GB from MAST, and `curl` comes with Windows 10 and later, macOS and Linux.
+[examples/smacs0723.yaml](https://github.com/SomethingObvious/jwst-peculiar/blob/main/examples/smacs0723.yaml) runs it on Webb's First Deep Field, which is what the demo shows. The four mosaics are 4.2 GB from MAST, and `curl` comes with Windows 10 and later, macOS and Linux.
 
 ```
 cd examples
@@ -61,7 +61,7 @@ A stamp needs S/N over 40 and a semimajor axis over 0.12", so anything smaller o
 
 ## The Patch Search
 
-The older search still works on any FITS image with a WCS, HST and Euclid included. It scores tiles by how far their DINOv3 patches sit from ordinary sky, which can catch diffuse light that source detection misses. [Usage](docs/usage.md#the-patch-search) and [the method](docs/method.md) cover it.
+The older search still works on any FITS image with a WCS, HST and Euclid included. It scores tiles by how far their DINOv3 patches sit from ordinary sky, which can catch diffuse light that source detection misses. [Usage](https://github.com/SomethingObvious/jwst-peculiar/blob/main/docs/usage.md#the-patch-search) and [the method](https://github.com/SomethingObvious/jwst-peculiar/blob/main/docs/method.md) cover it.
 
 ## Tests
 
@@ -73,4 +73,4 @@ cd web && npm ci && npm test
 
 ## Licence
 
-It's under the [PolyForm Noncommercial License 1.0.0](LICENSE.md). You can use it, change it and share it for anything noncommercial like research or study. Commercial use isn't allowed.
+It's under the [PolyForm Noncommercial License 1.0.0](https://github.com/SomethingObvious/jwst-peculiar/blob/main/LICENSE.md). You can use it, change it and share it for anything noncommercial like research or study. Commercial use isn't allowed.

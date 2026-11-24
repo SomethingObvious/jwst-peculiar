@@ -17,7 +17,7 @@ from jwst_peculiar.bundle import add_site_meta, export, save_verdict
 from jwst_peculiar.objects import Config, read_config, written
 from jwst_peculiar.objects.check import report
 from jwst_peculiar.objects.compact import dark_middle, one_band, one_pair, sharp
-from jwst_peculiar.objects.cut import Band, N, gaia_stars, render
+from jwst_peculiar.objects.cut import Band, N, gaia_stars, photometry, render
 from jwst_peculiar.objects.flags import blobs, merged, on_spikes
 from jwst_peculiar.objects.init import guess, split_name
 from jwst_peculiar.objects.rank import (
@@ -375,3 +375,10 @@ def test_init_keeps_the_bands_every_field_has(tmp_path: Path) -> None:
     assert keys["bands"] == ["f090w", "f150w", "f277w", "f444w"]
     assert keys["colour"] == ["f277w", "f150w", "f090w"]
     assert "fields" not in keys
+
+
+def test_photometry_drops_cover_where_a_band_has_no_pixels() -> None:
+    t = pd.DataFrame({"ra": [RA0, RA0 + 0.01], "dec": [DEC0, DEC0], "cover": True})
+    blank = np.array([[RA0 + d, DEC0 + d] for d in np.linspace(-2e-4, 2e-4, 9)])
+    photometry(t, band(np.zeros((60, 60), np.float32) + 1), name="f444w", blank=blank)
+    assert t.cover.tolist() == [True, False]

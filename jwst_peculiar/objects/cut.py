@@ -174,7 +174,8 @@ def _sums(band: Band, xy: Floats, r: float) -> tuple[Floats, Floats, Bools]:
         return np.asarray(aperture_photometry(img, ap)["aperture_sum"], float)
 
     noise = np.sqrt(np.maximum(total(band.rms.astype(np.float64) ** 2), 0))
-    bad = total(np.isnan(band.data).astype(np.float32)) > 0
+    # an aperture wholly off this band's image sums to NaN, and NaN > 0 is False
+    bad = ~(total(np.isnan(band.data).astype(np.float32)) == 0)
     return total(np.nan_to_num(band.data)), noise, bad
 
 

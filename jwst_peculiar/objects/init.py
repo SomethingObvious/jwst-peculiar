@@ -121,6 +121,8 @@ def main(argv: list[str] | None = None) -> int:
         msg = f"{a.config} is already there, so it was left alone."
         raise SystemExit(msg)
     keys = guess(a.folder)
+    keys["name"] = a.config.stem
+    keys["out"] = f"runs/{a.config.stem}"
     if a.config.resolve().parent != a.folder.resolve().parent:
         keys["pattern"] = (
             a.folder.resolve() / str(keys["pattern"]).split("/", 1)[1]

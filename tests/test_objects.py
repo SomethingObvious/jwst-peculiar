@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import codecs
 import csv
+import dataclasses
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 import io
@@ -22,7 +23,7 @@ import pytest
 from sklearn.linear_model import LogisticRegression
 import torch
 
-from jwst_peculiar import server
+from jwst_peculiar import cut, server
 from jwst_peculiar.check import report
 from jwst_peculiar.cli import main, run
 from jwst_peculiar.compact import (
@@ -1001,6 +1002,8 @@ def half_blank(tmp_path: Path) -> Config:
     for i in range(40):
         x0, y0, r = 30 + 12 * i, 40 + (i * 37) % 520, 2 + i % 5
         sky += 400 * np.exp(-((x - x0) ** 2 + (y - y0) ** 2) / (2 * r**2))
+    # and one too small for a stamp in the next tile along
+    sky += 30 * np.exp(-((x - 600) ** 2 + (y - 250) ** 2) / (2 * 1.5**2))
     sky[:, 700:] = 0
     w = band(sky).wcs
     for b in BANDS:
@@ -1016,13 +1019,29 @@ def half_blank(tmp_path: Path) -> Config:
     )
 
 
-def test_a_tile_off_the_mosaic_is_left_out_of_every_step(tmp_path: Path) -> None:
-    cfg = half_blank(tmp_path)
+def test_a_tile_off_the_mosaic_is_left_out_of_every_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = dataclasses.replace(half_blank(tmp_path), gaia=True)
+    asked: list[str] = []
+
+    def no_stars(q: str, _name: str) -> pd.DataFrame:
+        asked.append(q)
+        cols = ["ra", "dec", "phot_g_mean_mag", "classprob_dsc_combmod_star"]
+        return pd.DataFrame({c: [] for c in cols}, dtype=float)
+
+    monkeypatch.setattr(cut, "_query_gaia", no_stars)
     assert cut_main(cfg, ["--workers", "1"]) == 0
+    # a tile with segments but no stamps still asks Gaia over where they are
+    assert asked
+    assert not [q for q in asked if "nan" in q]
     root = cfg.out / "fields"
     assert (root / "a~0-2" / EMPTY).is_file()
-    assert cfg.cut_fields() == ["a~0-0", "a~0-1", "a~1-0", "a~1-1"]
-    # the mean colour stands in for Zoobot, and some tiles have no stamps at all
+    # this one only holds the edges of sources centred in its neighbours
+    assert (root / "a~1-1" / EMPTY).is_file()
+    assert cfg.cut_fields() == ["a~0-0", "a~0-1", "a~1-0"]
+    assert len(pd.read_csv(root / "a~0-1" / "objects.csv")) == 0
+    # the mean colour stands in for Zoobot
     net = torch.nn.Sequential(torch.nn.AdaptiveAvgPool2d(1), torch.nn.Flatten())
     for f in cfg.cut_fields():
         stamps = np.load(root / f / "stamps.npy")
@@ -1038,3 +1057,21 @@ def test_a_tile_off_the_mosaic_is_left_out_of_every_step(tmp_path: Path) -> None
     assert len(pd.read_csv(cfg.out / "compact.csv")) == 5
     # a second cut leaves the empty tiles be
     assert cut_main(cfg, ["--workers", "1"]) == 0
+
+
+def test_one_field_failing_leaves_the_rest_cut(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = half_blank(tmp_path)
+
+    def cut_or_fail(_cfg: Config, name: str, *, redo: bool) -> str:
+        assert not redo
+        if name == "a~0-1":
+            msg = "broken"
+            raise ValueError(msg)
+        return f"{name}: cut"
+
+    monkeypatch.setattr(cut, "cut_field", cut_or_fail)
+    with pytest.raises(SystemExit, match="a~0-1: broken"):
+        cut_main(cfg, ["--workers", "1"])
+    assert "a~1-1: cut" in capsys.readouterr().out

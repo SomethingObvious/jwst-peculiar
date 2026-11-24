@@ -18,9 +18,11 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
+from functools import partial
 import json
 import os
 import time
+import traceback
 from typing import TYPE_CHECKING, Any
 import warnings
 
@@ -51,6 +53,7 @@ from jwst_peculiar.config import (
 from jwst_peculiar.flags import blobs, flags, grid, stamp_pixels
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     import numpy.typing as npt
@@ -511,6 +514,9 @@ def measure(cfg: Config, name: str) -> Measured:
 
     Returns:
         The segments, their map, the bands, and each band's noise factors for the log.
+
+    Raises:
+        NoData: When the field or tile has no sources of its own.
     """
     boxes = cfg.boxes(name) or {}
     bands = {
@@ -524,6 +530,9 @@ def measure(cfg: Config, name: str) -> Measured:
     origin = (boxes[cfg.detect][0], boxes[cfg.detect][2]) if boxes else (0, 0)
     own = _own(seg, bands[cfg.detect], core=core, origin=origin)
     seg = seg.loc[own].reset_index(drop=True)
+    if seg.empty:
+        msg = "Every source here is centred in a neighbouring tile."
+        raise NoData(msg)
     blank = np.column_stack(blank_sky(segmap, bands[cfg.detect]))
     seg["cover"] = True
     seg["field"] = name
@@ -574,7 +583,9 @@ def cut_objects(
     t["half"] = np.maximum(MIN_HALF, SIZE * t.a_arcsec)
     cut, ok = stamps(t, [bands[b] for b in cfg.colour])
     t, cut = t.loc[ok].reset_index(drop=True), cut[ok]
-    flags(t, bands, cfg=cfg, gaia=gaia_stars(cfg, name, t), lone=lone)
+    # Gaia covers where the objects are, or every segment when none has a stamp
+    gaia = gaia_stars(cfg, name, t if len(t) else seg)
+    flags(t, bands, cfg=cfg, gaia=gaia, lone=lone)
     t["flag_outshone"] = outshone(cut)
     out = cfg.out / "fields" / name
     seg.to_csv(out / "segments.csv", index=False)
@@ -597,7 +608,7 @@ def cut_compact(
     """
     small = pd.concat([m.seg, red_only(cfg, name, m)], ignore_index=True)
     small = small.loc[compact.is_candidate(small)].reset_index(drop=True)
-    gaia = gaia_stars(cfg, name, objects)
+    gaia = gaia_stars(cfg, name, objects if len(objects) else m.seg)
     compact.compact_flags(
         small, m.bands, cfg=cfg, objects=objects, segments=m.seg, gaia=gaia, lone=lone
     )
@@ -664,8 +675,13 @@ def fitting_workers(cfg: Config, names: list[str]) -> int:
 def main(cfg: Config, argv: list[str]) -> int:
     """Cut every field that hasn't been cut yet.
 
+    A field that fails doesn't stop the rest, so one run shows every failure.
+
     Returns:
         0.
+
+    Raises:
+        SystemExit: When any field failed, naming them.
     """
     p = argparse.ArgumentParser(prog="jwst-peculiar cut CONFIG")
     p.add_argument("--redo", action="store_true", help="cut fields already cut again")
@@ -688,13 +704,27 @@ def main(cfg: Config, argv: list[str]) -> int:
         )
     ]
     workers = a.workers or fitting_workers(cfg, waiting)
+    failed: list[str] = []
+
+    def said(name: str, job: Callable[[], str]) -> None:
+        try:
+            print(job(), flush=True)  # noqa: T201 the command's progress
+        except Exception as err:  # noqa: BLE001 it's printed whole and named at the end
+            traceback.print_exception(err)
+            failed.append(f"{name}: {err}")
+
     if workers <= 1:
         for name in waiting:
-            print(cut_field(cfg, name, redo=a.redo), flush=True)  # noqa: T201 the command's progress
-        return 0
-    print(f"cutting {len(waiting)} fields, {workers} at a time", flush=True)  # noqa: T201 the command's progress
-    with ProcessPoolExecutor(workers) as pool:
-        jobs = [pool.submit(cut_field, cfg, name, redo=a.redo) for name in waiting]
-        for job in as_completed(jobs):
-            print(job.result(), flush=True)  # noqa: T201 the command's progress
+            said(name, partial(cut_field, cfg, name, redo=a.redo))
+    else:
+        print(f"cutting {len(waiting)} fields, {workers} at a time", flush=True)  # noqa: T201 the command's progress
+        with ProcessPoolExecutor(workers) as pool:
+            jobs = {
+                pool.submit(cut_field, cfg, name, redo=a.redo): name for name in waiting
+            }
+            for job in as_completed(jobs):
+                said(jobs[job], job.result)
+    if failed:
+        msg = "These failed, and the rest are cut. Cut again to retry just these.\n"
+        raise SystemExit(msg + "\n".join(failed))
     return 0

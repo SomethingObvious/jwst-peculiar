@@ -43,7 +43,8 @@ jobs:
           cache: pip
       - if: runner.os != 'macOS'
         run: pip install torch --index-url https://download.pytorch.org/whl/cpu
-      - run: pip install -e . pytest
+      # not editable, so a module left out of the package fails here
+      - run: pip install . pytest
       - run: pytest -q
       - run: jwst-peculiar objects --help
 

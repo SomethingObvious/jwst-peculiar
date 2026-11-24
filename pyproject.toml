@@ -55,8 +55,8 @@ jwst-peculiar = "jwst_peculiar.cli:main"
 requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["jwst_peculiar"]
+[tool.setuptools.packages.find]
+include = ["jwst_peculiar*"]
 
 [tool.setuptools.package-data]
 # The built web viewer, from `npm run build` in web/.

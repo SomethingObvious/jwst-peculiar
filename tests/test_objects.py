@@ -15,7 +15,7 @@ import pytest
 from sklearn.linear_model import LogisticRegression
 
 from jwst_peculiar.bundle import add_site_meta, export, save_verdict
-from jwst_peculiar.objects import Config, read_config, run, written
+from jwst_peculiar.objects import Config, main, read_config, run, written
 from jwst_peculiar.objects.check import report
 from jwst_peculiar.objects.compact import (
     BANDS,
@@ -740,3 +740,13 @@ def test_cached_weights_load_without_asking_the_hub(
     load_encoder("nano", torch.device("cpu"))
     assert seen == [offline]
     assert constants.HF_HUB_OFFLINE is False
+
+
+@pytest.mark.parametrize("step", ["cut", "run"])
+def test_a_steps_options_show_without_a_config(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], step: str
+) -> None:
+    with pytest.raises(SystemExit) as done:
+        main([step, str(tmp_path / "none.yaml"), "--help"])
+    assert done.value.code == 0
+    assert "--workers" in capsys.readouterr().out

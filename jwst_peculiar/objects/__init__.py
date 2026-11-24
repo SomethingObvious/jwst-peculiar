@@ -362,13 +362,32 @@ def run(cfg: Config, rest: list[str]) -> int:
     return 0
 
 
+STEP_HELP = """steps:
+  init     write a config from a folder of mosaics (give the folder for CONFIG)
+  check    say what the config finds and anything wrong with it
+  run      check, cut, embed, rank and compact in turn
+  cut      find sources, flag artefacts and cut stamps
+  embed    Zoobot embeddings of the stamps, on the GPU if there is one
+  rank     the rarity list, with the label model once there are verdicts
+  like     the objects that look most like ones you give
+  label    a random sample to give verdicts on in the viewer
+  view     open a list in the browser
+  compact  the list of sources too small for a stamp
+
+jwst-peculiar objects STEP CONFIG --help shows a step's own options."""
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run one step of the object search.
 
     Returns:
         The step's exit code.
     """
-    p = argparse.ArgumentParser(description="Run one step of the object search.")
+    p = argparse.ArgumentParser(
+        description="Run one step of the object search.",
+        epilog=STEP_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p.add_argument("step", choices=STEPS)
     p.add_argument(
         "config", type=Path, help="the survey's YAML config, or for init its mosaics"
@@ -379,12 +398,14 @@ def main(argv: list[str] | None = None) -> int:
         from jwst_peculiar.objects.init import main as init  # noqa: PLC0415 it reads no config
 
         return init([str(a.config), *a.rest])
-    cfg = read_config(a.config)
-    if a.step == "run":
+    asks = {"-h", "--help"} & set(a.rest)
+    # a step's options can be looked up before there's a config to give it
+    cfg = Config("help", Path(), "{field}_{band}") if asks else read_config(a.config)
+    if a.step == "run" and not asks:
         return run(cfg, a.rest)
     if a.step == "check":
         from jwst_peculiar.objects.check import main as step  # noqa: PLC0415 loads torch for the device
-    elif a.step == "cut":
+    elif a.step in {"cut", "run"}:  # run passes its options to cut
         from jwst_peculiar.objects.cut import main as step  # noqa: PLC0415 torch-free but slow to import
     elif a.step == "embed":
         from jwst_peculiar.objects.embed import main as step  # noqa: PLC0415 loads torch

@@ -203,16 +203,19 @@ def test_the_example_config_reads() -> None:
 def test_config_resolves_paths_and_finds_fields(
     tmp_path: Path,
 ) -> None:
-    (tmp_path / "data").mkdir()
+    # brackets in a folder name mean something to glob
+    data = tmp_path / "data [1]"
+    data.mkdir()
     for name in ("a_f277w", "b_f277w", "c_f150w"):
-        (tmp_path / "data" / f"{name}.fits").touch()
+        (data / f"{name}.fits").touch()
     (tmp_path / "survey.yaml").write_text(
-        "name: test\nout: run\npattern: data/{field}_{band}.fits\n", encoding="utf-8"
+        "name: test\nout: run\npattern: data [1]/{field}_{band}.fits\n",
+        encoding="utf-8",
     )
     cfg = read_config(tmp_path / "survey.yaml")
     assert cfg.out == tmp_path / "run"
     assert cfg.field_names() == ["a", "b"]
-    assert cfg.band_path("a", "f150w") == tmp_path / "data" / "a_f150w.fits"
+    assert cfg.band_path("a", "f150w") == data / "a_f150w.fits"
 
 
 def test_band_names_in_capitals_mean_the_same_bands(tmp_path: Path) -> None:

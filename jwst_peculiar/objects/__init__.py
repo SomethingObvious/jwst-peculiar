@@ -228,7 +228,9 @@ class Config:
             part.format(band=self.detect, BAND=self.detect.upper())
             for part in self.pattern.split("{field}", 1)
         )
-        found = (Path(f).as_posix() for f in glob.glob(pre + "*" + post))  # noqa: PTH207 {field} can sit in a folder name
+        # escaped, as a folder like "data [2024]" would otherwise be a character class
+        hits = glob.glob(glob.escape(pre) + "*" + glob.escape(post))  # noqa: PTH207 {field} can sit in a folder name
+        found = (Path(f).as_posix() for f in hits)
         names = sorted(f[len(pre) : len(f) - len(post)] for f in found)
         if not names:
             msg = f"No {self.detect} mosaics match {self.pattern}."

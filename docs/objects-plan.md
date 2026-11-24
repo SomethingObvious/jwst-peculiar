@@ -286,3 +286,29 @@ Both COSMOS-Web test blocks are used up, and the compact tests changed a lot on 
 3. How it's labelled. For each survey the main and compact top 100s go into one list, shuffled with seed 4 and with rank and score taken off, and I label all 200 from numbered contact sheets with the rubric used so far (worth a look, ordinary, artefact) before any published catalogue is matched to them.
 4. What it's judged on, for each survey. The main list: at least 50 worth a look and at most 5 artefacts in its top 100. A cluster field is full of lensed arcs, so worth a look may come easily in UNCOVER. The compact list: of the little red dots in Kocevski et al. (2025) inside the mosaic (46 in JADES and 23 in UNCOVER before coverage), at least 70% in the compact catalogue and at least 60% in its top 5%, and at most 40 artefacts in its top 100. Development gave 90%, 89% and 30, so these allow for a new survey being harder.
 5. After it. The numbers are reported as they come out, nothing is tuned on these surveys, and they aren't run again.
+
+### Third Test Result
+
+The plan above didn't hold in two ways, and both are set out here before the numbers.
+
+First, 0.8.0 couldn't run these surveys at all. Tiled configs crashed on tiles off a mosaic's edge, in five different ways, the last of which only showed once the others were fixed. None of those runs wrote a list. The fixes went in through d028531 and change nothing on a field with data, so a CEERS pointing gives 0.8.0's output byte for byte.
+
+Second, the d028531 run finished, and the first contact sheet showed every main stamp nearly pure red. DJA's mosaics are in 10 nJy per pixel, and their short-wave pixels have a quarter of the long-wave pixels' area, so the package read the short-wave bands 4 times too faint. That turned the stamps red and put every colour 1.5 mag out, compact list included, and `check` had said the units didn't matter. 6ac8381 turns each band into MJy/sr with its own pixel area. Mosaics already in MJy/sr, COSMOS-Web, CEERS and SMACS 0723 among them, get a factor of exactly 1. All output and that sheet were deleted and both surveys run again from scratch. Before that run, 20 shuffled entries of the broken UNCOVER sheet had been seen, with no ranks and no labels given. Nothing of JADES had been seen. No threshold, rule or model changed, but the surveys were run again where the plan says they wouldn't be, so this is closer to a fresh test than the one fixed above.
+
+The counted run used 6ac8381 with the COSMOS-Web label model (sha256 starting 4e80acaa) in each run folder. UNCOVER has 14,295 objects and 23,250 unflagged compact candidates, JADES 13,794 and 31,109. All 400 pooled entries were labelled blind before either key was opened.
+
+| Goal | Needed | UNCOVER | JADES |
+|---|---|---|---|
+| Worth a look in the main top 100 | at least 50 | 53 | 45 |
+| Artefacts in the main top 100 | at most 5 | 3 | 3 |
+| Kocevski little red dots in the compact catalogue | at least 70% | 78% (18 of 23) | 79% (27 of 34) |
+| The same in the compact top 5% | at least 60% | 70% (16 of 23) | 76% (26 of 34) |
+| Artefacts in the compact top 100 | at most 40 | 29 | 42 |
+
+UNCOVER meets every goal. JADES meets three and misses two, its main list by 5 and its compact artefacts by 2.
+
+The main lists are mostly mergers, close pairs, clumpy and ringed galaxies and, in UNCOVER, lensed arcs around the cluster. Their artefacts are satellite trails, one star and one galaxy whose bands look out of register. Neighbour-dominated stamps were rare (3 and 4).
+
+The compact lists find the little red dots well on both surveys, better than the goals allow for. Their artefacts are mostly one kind the tests don't catch: two or three dots of one colour in a short line, which look like a moving object caught in separate exposures. They make up 10 of UNCOVER's 29 and 19 of JADES's 42. The rest are striping, noise and stars, as on COSMOS-Web. A test for those dots is the obvious next change, and it has to be measured on development fields, not on these.
+
+One labeller again, with no second check. The recall figures come from a published catalogue and don't depend on the labels.

@@ -1025,12 +1025,18 @@ def test_a_tile_off_the_mosaic_is_left_out_of_every_step(
     cfg = dataclasses.replace(half_blank(tmp_path), gaia=True)
     asked: list[str] = []
 
-    def no_stars(q: str, _name: str) -> pd.DataFrame:
+    def a_star(q: str, _name: str) -> pd.DataFrame:
+        # one bright star in the middle of the box asked for
         asked.append(q)
-        cols = ["ra", "dec", "phot_g_mean_mag", "classprob_dsc_combmod_star"]
-        return pd.DataFrame({c: [] for c in cols}, dtype=float)
+        (r0, r1), (d0, d1) = re.findall(r"BETWEEN (\S+) AND (\S+)", q)
+        return pd.DataFrame({
+            "ra": [(float(r0) + float(r1)) / 2],
+            "dec": [(float(d0) + float(d1)) / 2],
+            "phot_g_mean_mag": [15.0],
+            "classprob_dsc_combmod_star": [1.0],
+        })
 
-    monkeypatch.setattr(cut, "_query_gaia", no_stars)
+    monkeypatch.setattr(cut, "_query_gaia", a_star)
     assert cut_main(cfg, ["--workers", "1"]) == 0
     # a tile with segments but no stamps still asks Gaia over where they are
     assert asked

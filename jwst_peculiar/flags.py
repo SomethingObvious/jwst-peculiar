@@ -242,7 +242,7 @@ def on_spikes(
     """
     hit = np.zeros(len(t), bool)
     star = gaia.loc[gaia.classprob_dsc_combmod_star.to_numpy(float) > STAR_PROB]
-    if not len(star):
+    if not len(star) or not len(t):
         return hit
     dec0 = float(t.dec.median())
     sxy, oxy = sky_xy(star.ra, star.dec, dec0), sky_xy(t.ra, t.dec, dec0)

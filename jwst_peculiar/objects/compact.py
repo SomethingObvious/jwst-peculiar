@@ -73,6 +73,7 @@ BANDS = ("f115w", "f150w", "f277w", "f444w")
 RED, OFFSET = "f444w", 1_000_000
 MIN_SN, MAX_A, MAX_AREA = 10.0, 0.12, 60
 PEAK_SN, PEAK_FLOOR, PEAK_SHARE = 10.0, 4.0, 20.0
+NEXT, RED_SEEN = "f277w", 2.0
 # 99th percentile of 0.1" over 0.25" flux for 742 Gaia stars, G 19 to 21, S/N over 30
 PSF_SHARPEST = {"f115w": 0.88, "f150w": 0.865, "f277w": 0.70, "f444w": 0.61}
 SHARP_SIG, SHARP_FLOOR = 3.0, 5.0
@@ -112,11 +113,21 @@ def _snr(t: pd.DataFrame, band: str) -> Floats:
 
 
 def one_band(t: pd.DataFrame) -> Bools:
-    """Return which candidates show in only one band, or are a one-band peak."""
+    """Return which candidates show in only one band, or are a one-band peak.
+
+    Where F444W is the brightest band, F277W at 2 sigma counts as seen, as a little
+    red dot can be 5 times fainter there. 56 of the 66 known ones found only in F444W
+    pass that way, and a lone F444W pixel is that bright in F277W 2% of the time.
+
+    Returns:
+        One flag per candidate.
+    """
     z = np.column_stack([_snr(t, b) for b in BANDS])
+    red = (z.argmax(axis=1) == BANDS.index(RED)) & (z[:, BANDS.index(NEXT)] >= RED_SEEN)
     top, rest = z.max(axis=1), np.sort(z, axis=1)[:, -2]
-    peak = (top >= PEAK_SN) & (rest < np.maximum(PEAK_FLOOR, top / PEAK_SHARE))
-    return np.asarray(((z >= DETECTED).sum(axis=1) < MIN_BANDS) | peak, bool)
+    peak = (top >= PEAK_SN) & (rest < np.maximum(PEAK_FLOOR, top / PEAK_SHARE)) & ~red
+    seen = (z >= DETECTED).sum(axis=1) + (red & (z[:, BANDS.index(NEXT)] < DETECTED))
+    return np.asarray((seen < MIN_BANDS) | peak, bool)
 
 
 def _sharpness(t: pd.DataFrame, b: str, top: float) -> tuple[Floats, Bools]:

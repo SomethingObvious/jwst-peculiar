@@ -599,3 +599,17 @@ def test_cut_runs_as_many_fields_at_once_as_cores_and_memory_allow(
     monkeypatch.setattr("jwst_peculiar.objects.cut.memory_size", lambda: 0.13e9)
     assert fitting_workers(cfg, names) == 1
     assert fitting_workers(cfg, names[:1]) == 1
+
+
+def test_a_faint_red_source_counts_as_seen_in_f277w_at_2_sigma() -> None:
+    # S/N per band in the 0.1" aperture, F115W to F444W
+    rows = {"red dot": [0.5, 0.7, 3.0, 15.0], "F444W hot pixel": [0.5, 0.7, 0.4, 15.0]}
+    t = pd.DataFrame({
+        f"{k}_{b}_10": [v[i] if k == "f" else 1.0 for v in rows.values()]
+        for i, b in enumerate(BANDS)
+        for k in ("f", "e")
+    })
+    assert dict(zip(rows, one_band(t).tolist(), strict=True)) == {
+        "red dot": False,
+        "F444W hot pixel": True,
+    }

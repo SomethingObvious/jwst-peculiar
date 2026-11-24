@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib
 from importlib.metadata import version
+import io
 import sys
 
 COMMANDS = {
@@ -88,6 +89,10 @@ def main(argv: list[str] | None = None) -> int:
         The subcommand's exit code, or 2 when there's no such command.
     """
     argv = sys.argv[1:] if argv is None else argv
+    # Piped output on Windows uses the ANSI code page, so printing a path with
+    # other letters in it would crash. This escapes them the way stderr does.
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(errors="backslashreplace")
     if not argv or argv[0] in ("-h", "--help", "--version"):
         asked = argv[:1] == ["--version"]
         said = f"jwst-peculiar {version('jwst-peculiar')}" if asked else usage()

@@ -24,8 +24,9 @@ tests as `flag_*` columns.
   S/N 100 as concentrated as a star. Cool brown dwarfs are redder, so they stay.
 - `gaia`: within 0.3" of a Gaia star's spikes or halo.
 - `piece`: a deblended piece of a stamped object's parent, inside its stamp.
-- `pixel`: a pixel 5 sigma under the sky, or a lone peak by `flags.blobs`, within
-  0.25" plus 1.5 of that band's pixels.
+- `pixel`: a lone peak by `flags.blobs` within 0.25" plus 1.5 of that band's
+  pixels, or a pixel 5 sigma under the sky as near in F277W and F444W and within
+  0.1" plus 1.5 pixels in F115W and F150W, as only the 0.1" flux of those is ranked.
 
 `objects compact` fits a 20-component Gaussian mixture to the unflagged candidates'
 three colours and two concentrations, and ranks them on minus the log density with
@@ -83,6 +84,8 @@ POINT, HALO_REACH, HALO_RATIO = 0.3, 2.0, 20.0
 # 97% of COSMOS-Web's 911 listed stars over S/N 100 pass, and 213 unlisted sources
 POINT_SN, POINT_F150W, POINT_F277W = 100.0, 0.75, (0.5, 0.8)
 NEG_SIG, APERTURE, BLOCK = 5.0, 0.25, 1.5
+# the bands whose 0.25" flux the ranking reads, and the aperture every band has
+CONCENTRATED, INNER = ("f277w", "f444w"), 0.1
 EDGE = 1.0
 LINE_IN, LINE_OUT, LINE_SIDE = 0.4, 1.5, 0.25
 # a median of n pixels has 1.2533 times the noise of their mean
@@ -233,7 +236,9 @@ def bad_pixel(t: pd.DataFrame, bands: dict[str, Band], lone: pd.DataFrame) -> Bo
     """Return which candidates have a pixel 5 sigma under the sky or a lone peak.
 
     A pixel counts when it lies within 0.25" plus 1.5 of its band's pixels, since a
-    hot pixel just outside 0.25" still leaks into the 0.063" long-wave aperture.
+    hot pixel just outside 0.25" still leaks into the 0.063" long-wave aperture. A
+    pixel under the sky in F115W or F150W counts within 0.1", the only aperture of
+    theirs the ranking reads, which kept 6 more of 158 known little red dots.
 
     Returns:
         One flag per candidate.
@@ -242,10 +247,11 @@ def bad_pixel(t: pd.DataFrame, bands: dict[str, Band], lone: pd.DataFrame) -> Bo
     for b in BANDS:
         band = bands[b]
         reach = APERTURE + BLOCK * band.scale
+        near = (APERTURE if b in CONCENTRATED else INNER) + BLOCK * band.scale
         yy, xx = np.nonzero(np.nan_to_num(band.data) < -NEG_SIG * band.rms)
         sky = band.wcs.pixel_to_world(xx, yy)
         ra, dec = np.asarray(sky.ra.deg, float), np.asarray(sky.dec.deg, float)
-        out |= _within(t, ra, dec, r=reach)
+        out |= _within(t, ra, dec, r=near)
         mine = lone.loc[lone.band == b]
         out |= _within(t, mine.ra.to_numpy(float), mine.dec.to_numpy(float), r=reach)
     return out

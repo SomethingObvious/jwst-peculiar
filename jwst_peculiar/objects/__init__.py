@@ -117,7 +117,8 @@ class Config:
 
     def band_path(self, name: str, band: str) -> Path:
         """Return the mosaic of one band of one field, or of the field a tile is in."""
-        return Path(self.pattern.format(field=split_tile(name)[0], band=band))
+        field = split_tile(name)[0]
+        return Path(self.pattern.format(field=field, band=band, BAND=band.upper()))
 
     def _header(self, name: str, band: str) -> Any:  # noqa: ANN401 astropy has no types
         return fits.getheader(self.band_path(name, band), self.hdu)
@@ -255,10 +256,11 @@ def _check_keys(path: Path, raw: dict[str, Any]) -> None:
 
 
 def _check_bands(path: Path, cfg: Config) -> None:
-    if "{band}" not in cfg.pattern or ("{field}" not in cfg.pattern and not cfg.fields):
+    named = "{band}" in cfg.pattern or "{BAND}" in cfg.pattern
+    if not named or ("{field}" not in cfg.pattern and not cfg.fields):
         msg = (
-            f"{path}'s pattern {cfg.pattern!r} needs {{band}}, and {{field}} unless"
-            " the config lists its fields."
+            f"{path}'s pattern {cfg.pattern!r} needs {{band}} (or {{BAND}} for file"
+            " names in capitals), and {field} unless the config lists its fields."
         )
         raise SystemExit(msg)
     missing = [b for b in (cfg.detect, *cfg.colour) if b not in cfg.bands]
@@ -266,6 +268,12 @@ def _check_bands(path: Path, cfg: Config) -> None:
         msg = f"{path} uses {missing} for detect or colour, but its bands are"
         msg += f" {list(cfg.bands)}."
         raise SystemExit(msg)
+
+
+def _names(value: str | list[object], *, keep_case: bool) -> tuple[str, ...]:
+    # papers write F115W, but the column names and every test use f115w
+    names = [str(value)] if isinstance(value, str) else [str(v) for v in value]
+    return tuple(names if keep_case else (n.lower() for n in names))
 
 
 def _resolve(path: Path, raw: dict[str, Any]) -> dict[str, Any]:
@@ -282,9 +290,9 @@ def _resolve(path: Path, raw: dict[str, Any]) -> dict[str, Any]:
             args[key] = rel(raw[key])
     for key in ("bands", "colour", "fields"):
         if key in raw:
-            value = raw[key]
-            one = isinstance(value, str)
-            args[key] = (str(value),) if one else tuple(map(str, value))
+            args[key] = _names(raw[key], keep_case=key == "fields")
+    if "detect" in raw:
+        args["detect"] = str(raw["detect"]).lower()
     if len(args.get("colour", "rgb")) != 3:  # noqa: PLR2004 red, green and blue
         msg = f"{path}'s colour needs three bands, red to blue, not {args['colour']}."
         raise SystemExit(msg)

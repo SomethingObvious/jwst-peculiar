@@ -215,6 +215,18 @@ def test_config_resolves_paths_and_finds_fields(
     assert cfg.band_path("a", "f150w") == tmp_path / "data" / "a_f150w.fits"
 
 
+def test_band_names_in_capitals_mean_the_same_bands(tmp_path: Path) -> None:
+    (tmp_path / "survey.yaml").write_text(
+        "name: t\nout: run\npattern: d/{field}_{BAND}.fits\nfields: [a]\n"
+        "bands: [F115W, F150W, F277W, F444W]\ndetect: F277W\n",
+        encoding="utf-8",
+    )
+    cfg = read_config(tmp_path / "survey.yaml")
+    assert cfg.bands == ("f115w", "f150w", "f277w", "f444w")
+    assert cfg.detect == "f277w"
+    assert cfg.band_path("a", "f115w") == tmp_path / "d" / "a_F115W.fits"
+
+
 BASE = "name: t\nout: run\npattern: d/{field}_{band}.fits\n"
 
 

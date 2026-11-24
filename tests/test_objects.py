@@ -485,3 +485,12 @@ def test_init_points_at_an_image_kept_in_the_primary_hdu(
     keys = guess(folder)
     assert keys["fields"] == ["egs-grizli-v7.2"]
     assert keys["hdu"] == 0
+
+
+def test_init_ignores_weight_and_error_maps(tmp_path: Path) -> None:
+    folder = tmp_path / "m"
+    folder.mkdir()
+    for kind in ("err", "sci", "wht"):
+        for b in BANDS:
+            (folder / f"jw01727-o001_t001_{b}_{kind}.fits").touch()
+    assert guess(folder)["pattern"] == "m/{field}_{band}_sci.fits"

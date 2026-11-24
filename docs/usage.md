@@ -84,6 +84,7 @@ Run `objects check` first, as it catches most of these before a long step does.
 - A step stopped with Ctrl+C or a full disk can be run again. Each field's stamps, embeddings and compact list are written whole, and finished fields are skipped.
 - `the mosaics' units are ... rather than MJy/sr` means the `f_` and `e_` columns in `objects.csv` aren't in nJy. Nothing else changes, as the tests and rankings only use ratios and S/N, but every band needs the same units.
 - `cut short or empty, so its download probably stopped early` means a mosaic is smaller than its own header says. Download it again, as `curl -o` leaves whatever arrived before a dropped connection.
+- On a remote machine, run `view` with `--no-browser` and forward its port, with `ssh -L 8765:127.0.0.1:8765 host`, then open http://127.0.0.1:8765/ on your own. The viewer only listens on the machine it runs on.
 - `Port 8765 is taken` only means another viewer is open, and this one uses a free port instead.
 - `cut` needs memory for a whole field at once, about 31 bytes per pixel over all its bands. If a field doesn't fit, leave a band out of `bands`, and with `--workers` each worker needs that much.
 

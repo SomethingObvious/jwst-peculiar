@@ -24,6 +24,10 @@ BAND = re.compile(r"f(\d{3,4})[wmn]2?", re.IGNORECASE)
 COMPACT = ("f115w", "f150w", "f277w", "f444w")
 NOISE = re.compile(r"([-_](nircam|clear))+$", re.IGNORECASE)
 SEPARATORS = "-_."
+# maps that come beside a mosaic and cover the same fields
+AUXILIARY = re.compile(
+    r"[-_.](wht|err|var|exp|ctx|con|rms|weight|mask)[-_.]", re.IGNORECASE
+)
 
 
 def _microns(band: str) -> float:
@@ -95,7 +99,8 @@ def _scan(folder: Path) -> Seen:
         if got:
             field, pattern, band = got
             seen[pattern][field].add(band)
-    return _after_band(seen)
+    science = {p: fs for p, fs in seen.items() if not AUXILIARY.search(p)}
+    return _after_band(science or seen)
 
 
 def _image_hdu(path: Path) -> int:

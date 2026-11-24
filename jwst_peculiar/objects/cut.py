@@ -16,6 +16,7 @@ pixels across wants splitting into fields first.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 import json
 from typing import TYPE_CHECKING, Any
@@ -484,11 +485,25 @@ def main(cfg: Config, argv: list[str]) -> int:
     """
     p = argparse.ArgumentParser(prog="jwst-peculiar objects cut CONFIG")
     p.add_argument("--redo", action="store_true", help="cut fields already cut again")
+    p.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="fields to cut at once, each needing the memory objects check gives",
+    )
     a = p.parse_args(argv)
     want = ["stamps.npy", compact.LIST] if compact.has_bands(cfg) else ["stamps.npy"]
-    for name in cfg.field_names():
-        done = cfg.out / "fields" / name
-        if not a.redo and all((done / f).exists() for f in want):
-            continue
-        print(cut_field(cfg, name, redo=a.redo), flush=True)  # noqa: T201 the command's progress
+    waiting = [
+        name
+        for name in cfg.field_names()
+        if a.redo or not all((cfg.out / "fields" / name / f).exists() for f in want)
+    ]
+    if a.workers <= 1:
+        for name in waiting:
+            print(cut_field(cfg, name, redo=a.redo), flush=True)  # noqa: T201 the command's progress
+        return 0
+    with ProcessPoolExecutor(a.workers) as pool:
+        jobs = [pool.submit(cut_field, cfg, name, redo=a.redo) for name in waiting]
+        for job in as_completed(jobs):
+            print(job.result(), flush=True)  # noqa: T201 the command's progress
     return 0

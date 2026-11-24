@@ -1,29 +1,39 @@
 [project]
 name = "jwst-peculiar"
-version = "0.5.0"
-description = "Unsupervised anomaly detection on JWST imagery with DINO patch embeddings"
+version = "0.9.0"
+description = "Finds odd objects in JWST NIRCam mosaics, with artefact tests, Zoobot embeddings and a labelling viewer"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "PolyForm-Noncommercial-1.0.0"
 license-files = ["LICENSE.md"]
+keywords = ["astronomy", "JWST", "NIRCam", "anomaly detection", "little red dots"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering :: Astronomy",
+]
 
 dependencies = [
   "numpy",
-  "torch>=2.8",  # the first release where torch.mm takes out_dtype
-  "transformers>=4.56",  # the first release with DINOv3
+  "torch>=2.8",
+  "timm>=1.0",  # loads the Zoobot encoder
   "huggingface_hub",
   "astropy",
-  "reproject",  # puts the NIRCam filters on one grid
   "Pillow>=9.1",
   "scipy",
-  "tifffile",
   "pandas",
   "PyYAML",
-  "tqdm",
-  "matplotlib",
-  "pyvo",  # SIMBAD, NED and Gaia over TAP for `jwst-peculiar match`
-  "photutils",  # finds and measures sources for the colour search
-  "scikit-learn",  # the isolation forest baseline in `jwst-peculiar bench`
+  "pyvo",  # Gaia over TAP, for the stars in each field
+  "photutils<4",  # finds and measures sources, and 4.0 drops progress_bar
+  "scikit-image",  # photutils before 3.1, all Python 3.11 gets, deblends with it
+  "requests",
+  "scikit-learn",
   "typing_extensions",  # @override on Python 3.11
 ]
 
@@ -36,16 +46,13 @@ dev = [
   "pytest",
   "ruff",
   "scipy-stubs",
-  "stpsf",
   "types-PyYAML",
-  "types-tqdm",
 ]
-# STScI's Webb PSF model, which `jwst-peculiar bench` plants sources with when it's installed.
-webb = ["stpsf"]
 
 [project.urls]
 Demo = "https://somethingobvious.github.io/jwst-peculiar/"
 Repository = "https://github.com/SomethingObvious/jwst-peculiar"
+Documentation = "https://github.com/SomethingObvious/jwst-peculiar/blob/main/docs/usage.md"
 
 [project.scripts]
 jwst-peculiar = "jwst_peculiar.cli:main"
@@ -54,8 +61,8 @@ jwst-peculiar = "jwst_peculiar.cli:main"
 requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["jwst_peculiar"]
+[tool.setuptools.packages.find]
+include = ["jwst_peculiar*"]
 
 [tool.setuptools.package-data]
 # The built web viewer, from `npm run build` in web/.
@@ -147,7 +154,7 @@ enable_error_code = [
 
 [[tool.mypy.overrides]]
 # No stubs ship for these.
-module = ["astropy.*", "photutils.*", "reproject.*", "pyvo.*", "tifffile.*", "safetensors.*", "stpsf.*", "sklearn.*", "transformers.*", "huggingface_hub.*"]
+module = ["astropy.*", "photutils.*", "pyvo.*", "sklearn.*", "huggingface_hub.*", "timm.*"]
 ignore_missing_imports = true
 
 [tool.basedpyright]

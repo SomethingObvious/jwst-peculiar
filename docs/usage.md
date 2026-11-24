@@ -1,180 +1,64 @@
 # Usage
 
-Each step is a subcommand of `jwst-peculiar`, and each takes `--help`.
 
-```
-jwst-peculiar prep        cut FITS mosaics into tiles
-jwst-peculiar levels      measure one stretch per filter for a survey
-jwst-peculiar run         score every tile, in two passes
-jwst-peculiar score       score tiles against tiles known to be normal
-jwst-peculiar match       cross-match each tile's peak with SIMBAD, NED and Gaia DR3
-jwst-peculiar candidates  write the ranking as a FITS or VOTable table and DS9 regions
-jwst-peculiar view        open the ranking in the web viewer, or export it as a site
-jwst-peculiar bench       plant sources of known magnitude and measure what is found
-jwst-peculiar recall      measure how a run ranks objects known to be in the field
-jwst-peculiar unzip       expand .gz mosaics so they can be memory-mapped
-```
+jwst-peculiar finds the sources in each field, cuts a colour stamp of every one big and bright enough, embeds the stamps with Zoobot and ranks them by how unlike every other object they are. Each step is a subcommand of `jwst-peculiar` and takes `--help`. [objects-plan.md](objects-plan.md) has how it was built and how well it does.
 
-The survey tools run as modules, and each takes `--help` too.
+A YAML file says where a survey's mosaics are. Paths in it are relative to the file. `init mosaics survey.yaml` writes one for a folder of mosaics, reading the field and filter out of names like MAST's `jw02736-o001_t001_nircam_clear-f090w_i2d.fits`, DJA's `egs-grizli-v7.2-f115w-clear_drc_sci.fits` or COSMOS-Web DR1's `mosaic_nircam_f277w_COSMOS-Web_60mas_A1_v1.0_i2d.fits`, and sets `hdu: 0` when the image is in the primary HDU. Gzipped mosaics work as they are, though `cut` reads them more slowly, as each has to be unpacked whole, and `unzip mosaics` expands them in place. It keeps the bands every field has, finds sources in the one nearest F277W and colours the stamps with that, the one nearest F150W and the bluest. On a CEERS pointing from MAST, which nothing here was tuned on, it wrote a working config first time, and the top 50 had 2 artefacts, a satellite trail and a diffraction spike.
 
-```
-python -m jwst_peculiar.survey [--middle] SPLIT STARS DATA RESULTS   the verdict of a pre-registered search
-python -m jwst_peculiar.survey --check SPLIT STARS DATA              whether a split could name a tile, before scoring
-python -m jwst_peculiar.vet SPLIT STARS DATA RESULTS OUT             the vetting list
-python -m jwst_peculiar.colour RAW STARS OUT MOSAICS...              the colour list
-python -m jwst_peculiar.confirm --default DIRS --candidate DIRS      the sign-flip test between two models' benches
+```yaml
+name: cosmos-web
+out: runs/cosmos-web          # everything the steps write goes here
+pattern: mosaics/{field}_{band}_sci.fits
+bands: [f115w, f150w, f277w, f444w]
+detect: f277w                 # the band sources are found in
+colour: [f277w, f150w, f115w] # red, green and blue of the stamps
+stars: stars.csv              # optional, ra and dec of known stars
+gaia: true                    # query Gaia DR3 for spikes, or a CSV, or false
+device: auto
 ```
 
-[search.md](search.md) and [minerva.md](minerva.md) describe what each one does.
+Without `fields`, every mosaic the pattern matches in the detect band is a field.
 
-## Cutting Tiles
-
-### Any FITS Image
-
-The default sensor reads anything with a celestial WCS, one grey band per file. The image can be in the primary HDU or an extension (`--sci_ext`), and a weight map is picked up from a `WHT` extension or a file beside it.
+`check` reads the config and says what it found before any long step runs: how many fields, any mosaic a field lacks, the memory `cut` needs for the biggest field and the disk the whole run needs, the device `embed` will use and whether the Zoobot weights are downloaded yet. The disk figure is an upper bound, as SMACS 0723 took 2.5 bytes per mosaic pixel and COSMOS-Web 1.5. A misspelled key, a band missing from `bands` or a pattern without `{band}` stops it with the reason. Band names can be written either way (F115W or f115w), and a pattern with `{BAND}` instead of `{band}` fills in capitals for file names that have them, which `init` writes when it sees them. `run` does `check`, `cut`, `embed`, `rank` and, with F115W, F150W, F277W and F444W, `compact` in turn, and stops at the first that fails. Options after the config go to `cut`, like `run survey.yaml --redo`.
 
 ```
-# An HST drizzled image, counts per second with PHOTFNU in the header.
-jwst-peculiar prep --files hst_10092_acs_wfc_f814w_drz.fits --out datasets/hst \
-  --tile_size 320 --upscale 1 --stride 160 --wcs_in_name --save_cutouts
-
-# A folder of mosaics with weight maps called <name>_wht.fits.
-jwst-peculiar prep --indir rawfits/euclid --pattern "*.fits" --wht_pattern "{stem}_wht.fits" \
-  --out datasets/euclid --tile_size 320 --wcs_in_name --save_cutouts
-
-# Colour from three files of one field, red first. Without a WCS they need the same grid.
-jwst-peculiar prep --rgb f160w.fits f125w.fits f814w.fits --out datasets/hst_rgb \
-  --tile_size 320 --wcs_in_name --save_cutouts
+jwst-peculiar init mosaics survey.yaml  a config from the mosaics' file names
+jwst-peculiar check survey.yaml         what the config finds, before a long run
+jwst-peculiar run survey.yaml           check, cut, embed, rank and compact in turn
+jwst-peculiar cut survey.yaml           detect, measure, flag and cut stamps
+jwst-peculiar embed survey.yaml         Zoobot embeddings of every stamp
+jwst-peculiar rank survey.yaml -n 500   the rarest systems, to rank.csv
+jwst-peculiar rank survey.yaml --sample -n 200
+jwst-peculiar rank survey.yaml --reference cosmos-web.yaml
+jwst-peculiar like survey.yaml jw01727-o001_t001:5159
+jwst-peculiar view survey.yaml --list sample.csv
+jwst-peculiar label survey.yaml
+jwst-peculiar compact survey.yaml -n 500
+jwst-peculiar view survey.yaml --list compact.csv
+jwst-peculiar view survey.yaml --export site/ --site_url https://example.org/demo/
 ```
 
-A mosaic without a weight map gets a warning, as tiles on the edge of its coverage can't be dropped and will crowd the top of the ranking. `--min_wht_frac 0` then keeps everything, and it reads no weight map at all, so the noise isn't evened out either.
+`cut` writes each field's objects to `fields/FIELD/objects.csv` with their aperture photometry in nJy and a `flag_*` column for every artefact test. A flagged object is left out of the ranking, and `flag_outshone`, a brighter neighbour in the stamp, only keeps it off the list. Each field is read into memory whole, about 31 bytes per pixel over all its bands, so SMACS 0723's 121 Mpx peaked at 3.7 GB. `cut` cuts several fields at once, one for every four cores and no more than fit in half the machine's memory, which took 4 COSMOS-Web fields from 3 minutes 17 seconds to 68 seconds on a 16-thread laptop with the same output. `--workers 1` cuts one at a time, and any other number sets it.
 
-With a weight map, prep also evens out the noise before rendering, scaling the flux above the sky by the square root of each pixel's weight over the mosaic's median, capped at 1. Otherwise sky covered by fewer exposures renders noisier and fills the top of the ranking. `--no-noise_eq` turns it off, and [the method](method.md#even-noise) has the details.
+A mosaic too big for memory, like a whole JADES or UNCOVER field, can be cut in squares with `tile: 4000` in the config, counted in pixels of the detection band. Each square is a field of its own named `FIELD~ROW-COL`, read with a 12 arcsec margin so an object on a border comes out whole, and it keeps only the objects centred in it. A tile off the mosaic's edge, with no sources at all, is left out of every step. `init` sets `tile` itself when a mosaic would need more than about 8 GB, and `check` says when the memory needed is more than the machine has and what tile size would fit. On CEERS in 2000-pixel tiles, 99.6% of objects matched the run on the whole mosaic and 49 of the top 50 were the same, and on the SMACS 0723 cluster 98.6% did. The rest are faint ones spread evenly over the field, as the sky background is fitted per tile.
 
-Prep records what the headers say about each band in `mosaics/<id>.json`: the filter, the telescope, the pivot wavelength, how many janskys one unit of pixel value is (from `BUNIT`, `PHOTFNU` or an AB zero point such as `MAGZERO`), and the diffraction-limited PSF width for JWST, HST, Euclid and Roman. The benchmark needs those, and `jwst-peculiar bench --jy_per_unit` and `--psf_fwhm` cover headers that don't give them.
+`rank` counts systems, so the stamps of one galaxy take one place between them. `rank --reference other.yaml` counts another run's objects as neighbours too, so a run of one or two fields can be ranked against what a bigger survey says is common. Ranking 101 COSMOS-Web fields one at a time, with the other fields as reference, put 158 known odd objects in the fields' top 20s instead of 137, and left the top 5% the same (234 rather than 236). It works best when both runs use the same bands for colour, as a stamp's colours are part of what the embedding sees. `like` takes object ids or `RA,DEC` in degrees and lists the objects most like them. `view` opens any of these lists in the viewer, where `1` to `4` mark an object interesting, an artefact, known or ordinary and save to `verdicts.csv` in the run folder. Once there are at least 5 verdicts of each kind, `label` fits a classifier on them, and from then on `rank` multiplies rarity by its chance that an object is worth a look (`--image-only` turns that off). Interesting and known objects both count as worth a look, and a known object stays off later lists. The list alone teaches it what rare looks like but not what ordinary looks like, so label a `--sample` batch from places 101 to 2,000 now and then as well. A new run can start from another run's verdicts by copying that run's `label_model.npz` into its folder, as long as both use the same bands for colour, and `label` replaces it once the new run has verdicts of its own. `view --export` writes a list as a static site instead, and `--site_url` adds its social card and sitemap for where it will be hosted.
 
-### JWST Presets
+`compact` ranks the sources too small for a stamp, which is where little red dots and brown dwarfs end up. `cut` writes each field's candidates to `fields/FIELD/compact.csv` when the config has F115W, F150W, F277W and F444W: segments at S/N 10 or more with a semimajor axis of 0.12" or less or an area under 60 pixels, found in F277W or, where F277W has nothing, in F444W. Each has its own `flag_*` tests for cosmic rays, hot pixels, stars and their spikes, and for a mosaic's edge within 1", where there are fewer exposures and more noise. That one left COSMOS-Web's recall of known little red dots and brown dwarfs as it was and took the artefacts among its labelled top 100 from 27 to 22. `flag_line` catches a thin straight line running through a candidate, a trail, a stripe or a spike, by comparing it with the sky 0.25" either side (a galaxy is wider than that, and a star's own spikes are far fainter than its centre). It hit all three trails and one cosmic ray among the 193 COSMOS-Web candidates labelled so far and none of the interesting ones. The halo test takes the field's own bright point sources as stars as well as any star list, as Gaia misses most stars fainter than about 21st magnitude. A pixel far under the sky only counts within 0.1" in F115W and F150W, the only aperture of theirs the ranking reads, which brought known little red dots in COSMOS-Web's top 5% from 216 to 223 and brown dwarfs from 17 to all 18. Where F444W is a candidate's brightest band and F277W is at 2 sigma with that light centred (at least 0.3 of the 0.25" flux inside 0.1"), F277W counts as seen for the one-band test, and a lone F444W peak within 0.1" counts as the candidate's own centre rather than a hot pixel. A little red dot can be 5 times fainter in F277W, and 66 known ones had been thrown out as one-band artefacts and 31 more for their own F444W peak. With both changes 277 of the 312 known ones on development fields are in the top 5%. Of the 50 such candidates in the top 100, 41 were worth a look and 4 were artefacts. A point source a magnitude or more brighter in F150W than F277W, and half a magnitude brighter in F277W than F444W, is flagged as a star too faint for Gaia. That took the development top 100 from 35 artefacts or stars to 30 and didn't touch a known little red dot or brown dwarf. `compact` ranks the unflagged ones on how rare their colours and concentrations are, averaged over three fits with different seeds (two single fits shared only 84 or so of their top 100, and two averages share 92), and writes a four-panel tile of each (colour and F115W on top, F277W and F444W below) so `view` can show them. It finds known little red dots very well, though 30 of its top 100 on COSMOS-Web development fields, and about half on a held-out block with a lot of short-wave striping, were still artefacts or stars, so expect to throw a fair number out. On a CEERS pointing about 8 of the top 50 were artefacts, three of them along one trail, and with the line and halo tests that went down to 3 clear ones and about 4 doubtful. Of the 7 little red dots from Kocevski et al. (2025) inside that pointing, 5 pass every test and rank in the top 56 of the 2710 that do (places 2, 4, 38, 55 and 56). A single fit can move one of them anywhere from 44th to 88th, which is why the ranking averages three. One more was taken for a piece of a neighbour, and the brightest, at F444W 24.0, was too big a segment to be a candidate at all.
 
-`--sensor miri` takes JWST i2d files or `*sci.fits` and `*wht.fits` pairs. `--sensor nircam` makes colour tiles from three NIRCam filters of one field, reprojecting them onto one grid and keeping a tile only where all three have data. This is how the demo was cut.
+## When Something Goes Wrong
 
-```
-jwst-peculiar prep --sensor nircam --indir rawfits/smacs0723 --out datasets/smacs_nircam \
-  --pattern "jw02736-o001_t001_nircam_clear-{filter}_i2d.fits" --tiles smacs0723 \
-  --rgb_filters f444w f356w f277w --tile_size 320 --upscale 1 --stride 160 \
-  --wcs_in_name --save_cutouts
-```
+Run `check` first, as it catches most of these before a long step does.
 
-For a lot of MIRI mosaics, smaller tiles work better. For a few, bigger ones do.
-
-```
-jwst-peculiar prep --sensor miri --indir rawfits --out datasets/miri --pattern "*i2d.fits" \
-  --tile_size 448 --upscale 1 --stride 420 --min_wht_frac 1 \
-  --source_sigma 5 --min_source_frac 2e-4 --stretch_scope mosaic --wcs_in_name --save_cutouts
-```
-
-### One Stretch for a Survey
-
-Each mosaic's colour stretch comes from its own 99.8th percentile, which is fine for one field but not for a survey. A bright star in one visit pushes that percentile up and the whole visit comes out darker than the rest, and in COSMOS-Web that one visit made most of the strangest tiles the search had to beat ([search.md](search.md#the-result)). `jwst-peculiar levels` takes the median range of each filter over datasets prep already cut, and `--levels` gives every mosaic that range above its own sky.
-
-```
-jwst-peculiar levels datasets/cosmosweb/* --out levels.json
-jwst-peculiar prep --sensor nircam ... --levels levels.json
-```
-
-The median needs a fair number of visits to settle, so the usual way is to cut the first batch of a survey with its own stretch, write the levels from them, and cut everything again with the file. It's for colour mosaics only. Visits of quite different depth (like a deep field and a shallow one in the same programme) probably want a file each, since the noise sits at a different place in the same range.
-
-### Choosing the Thresholds
-
-A tile is kept when all of it is covered (`--min_wht_frac`) and enough of it sits `--source_sigma` above the noise (`--min_source_frac`). Both are measured against each mosaic's own sky level and noise, so the same values work across units and depths. `--dry-run` cuts and filters without writing anything, which is the quick way to see what a threshold keeps.
-
-`--save_cutouts` also writes each tile's float pixels and WCS as a FITS cutout. The viewer measures from those and the benchmark plants its sources in them, so it's worth always passing.
-
-## Scoring
-
-```
-jwst-peculiar run --data_root datasets/smacs_nircam --out_dir results_smacs --tag knn
-```
-
-This scores every tile against a random reference drawn from the tiles themselves, then rebuilds the reference from the lowest scores and scores again. A tile is never compared with a reference tile it overlaps. The ranking is in `measurements_final.csv`, with a patch-distance map per tile under `pass2/anomaly_maps/` and each tile's descriptor in `pass2/descriptors.npz`.
-
-Embeddings are cached under `DATA_ROOT/.features`, keyed by each tile's bytes, the backbone settings and, for a checkpoint in a local folder, its weight files, so the second pass and any later run with the same backbone only embed what changed. `--feature_cache none` turns that off.
-
-A few options matter more than the rest.
-
-```
---detector subspace --layers mid   SubspaceAD instead of kNN
---model_name dinov2_vitl14         an ungated backbone
---resolution 672                   more patches per tile, about twice as slow
---k_neighbors 20                   smoother kNN scores
---rotation                         every rotation and flip of the reference tiles, slow
---score_mode peak_minus_median     one small oddity rather than a tile odd all over
---places 3                         a patch needs close matches in 3 separate places
---detector iforest                 the isolation forest baseline, no backbone
---bank_precision fp32              an fp32 memory bank, slower with the same ranking
-```
-
-`jwst-peculiar run --help` lists everything else, like the reference sizes for each pass. A backbone too big for the GPU, like `dinov3-vit7b16-pretrain-sat493m` on 8 GB, is streamed from disk a layer at a time, and `args.yaml` records the precision and whether it was streamed.
-
-### Another Field as Reference
-
-```
-jwst-peculiar run --data_root datasets/smacs_nircam --out_dir results_cross \
-  --reference_roots datasets/abell370_nircam datasets/macs0416_nircam datasets/ceers1_nircam
-```
-
-This scores every tile against two or more other fields in place of the bootstrap, and each of those fields against the rest to calibrate a p-value and q-value per tile. They're in `significance.csv`, and the viewer shows them and filters by q. The fields need the same filters, stretch and a similar depth, and their mosaics different `--tiles` names. [The method](method.md#another-field-as-reference) has what the p-values assume.
-
-## Catalogues
-
-```
-jwst-peculiar match results_smacs_knn datasets/smacs_nircam
-jwst-peculiar match results_smacs_knn datasets/smacs_nircam --catalogue jades.fits --radius 1
-```
-
-Every source SIMBAD, NED and Gaia DR3 know over each mosaic is fetched once over TAP, in cones 3 arcminutes in radius, and kept in `RUN/catalogues/`. Each tile then gets the sky position of its most anomalous patch and the nearest source in each catalogue, and it counts as uncatalogued when none of them has anything within `--radius` arcseconds. `--catalogue` adds a local FITS, VOTable or CSV catalogue, with its RA and Dec columns found by name.
-
-When a service doesn't answer, its other mirrors are tried, and a later `--refresh` that fails keeps the copy it already had. The viewer shows the matches and marks every catalogued source on the tile.
-
-## Candidate Tables
-
-```
-jwst-peculiar candidates results_smacs_knn datasets/smacs_nircam -o candidates.fits
-jwst-peculiar candidates results_smacs_knn datasets/smacs_nircam -o new.vot --top 50 --uncatalogued
-```
-
-The format follows the extension (`.fits`, `.vot`, `.csv` or `.ecsv`). Each row is a tile, with the peak's RA and Dec, both scores, the nearest source in every checked catalogue and its separation, and your verdict, star and note. A DS9 region file is written beside it, with a circle at each peak.
-
-## The Viewer
-
-```
-jwst-peculiar view results_smacs_knn datasets/smacs_nircam
-jwst-peculiar view results_smacs_knn datasets/smacs_nircam --export site/ --cutouts 24 \
-  --site_url https://example.org/demo/
-```
-
-The first serves the viewer on localhost and saves verdicts to `verdicts.csv` in the run folder. The second writes a static site any host can serve, where verdicts stay in each visitor's browser and can be exported as CSV. The verdicts and notes already in the run folder's `verdicts.csv` go into the site, so look through them before publishing it. `--cutouts` keeps the FITS cutouts for the top tiles only, as they're about 1.2 MB each. The viewer calls a run by its `--tag`, and `--name "Webb's First Deep Field"` gives it a better one for the page title and link previews. Browsers still file their verdicts under the tag, so a new name doesn't lose them.
-
-`j` and `k` step through the ranking, `1` to `4` mark a tile as interesting, an artifact, a known object or not anomalous, `s` stars it, `n` adds a note, `c` toggles the catalogue markers and `?` lists every key.
-
-Sorting the index by Learned ranks tiles by their anomaly percentile times what your verdicts say about tiles like them, which [the method](method.md#learning-from-verdicts) explains. With no verdicts it is the anomaly ranking unchanged.
-
-## Benchmark
-
-```
-jwst-peculiar bench --data_root datasets/smacs_nircam --out_dir bench --mags 22 23 24 25 26 27 28 --seeds 5
-```
-
-It needs a dataset cut with `--save_cutouts`. `--detectors` picks from knn, subspace, pixels and iforest, and `--psf` from webb, gaussian and auto, which takes STPSF's model for JWST when it's installed (`pip install -e .[webb]`). Arguments after `--` go to every `jwst-peculiar run`, and [the benchmark page](benchmark.md) has what it measures and the SMACS 0723 results.
-
-## Known Objects
-
-```
-jwst-peculiar recall results_smacs_knn datasets/smacs_nircam --objects lensed.csv \
-  --centre 110.8270 -73.4541
-```
-
-The objects come from a CSV with `ra` and `dec` in degrees and an optional `id` like 1.2, where the part before the dot groups the images of one lensed galaxy. It reports where each object's patch ranks among every patch the run scored, and `--centre` also compares each one only with patches at the same distance from that point, which keeps a cluster core's general oddness from counting. `recall.csv` has every object and `recall.json` the summary.
-
-## Tiles Known to Be Normal
-
-`jwst-peculiar score --data_root DIR` is for when you already have a `train/` folder of normal tiles to use as the reference instead of the bootstrap. It scores the tiles in `test/` beside it.
+- `embed would run on cpu` on a machine with an NVIDIA GPU means pip installed the CPU build of PyTorch, which it does on Windows. Install the CUDA build from [pytorch.org](https://pytorch.org/get-started/locally/) into the same environment.
+- `Couldn't query Gaia` means the Gaia archive didn't answer, even after `cut` tried again three times over about two minutes, which is usually enough when it turns away several fields cut at once. Try again later, point `gaia:` at a CSV of `ra`, `dec`, `phot_g_mean_mag` and `classprob_dsc_combmod_star`, or set `gaia: false` to skip the spike test.
+- `no compact list` from `check` means the config lacks one of F115W, F150W, F277W and F444W, which every compact test was set on. The main list still runs. On a machine without internet, like most cluster compute nodes, set `gaia: false` or give a Gaia CSV. The Zoobot weights also need fetching once, so run `embed` on a machine with internet first and copy its Hugging Face cache (`~/.cache/huggingface`) across, or set `HF_HOME` to a shared folder.
+- `Couldn't load hf_hub:mwalmsley/zoobot-encoder-convnext_nano` means the Zoobot weights couldn't be downloaded. They come from the Hugging Face hub the first time `embed` runs, and are read from its cache after that.
+- A step stopped with Ctrl+C or a full disk can be run again. Each field's stamps, embeddings and compact list are written whole, and finished fields are skipped.
+- `the mosaics are in ..., so each band is turned into MJy/sr` is only a note. Mosaics in flux per pixel, like DJA's, are divided by each band's pixel area, so bands on different pixel grids still give the right colours.
+- `the mosaics' units are ..., which can't be turned into MJy/sr` means a BUNIT the tool can't read, like counts. The colours and the nJy columns are then only right if every band has the same unit and pixel size.
+- `cut short or empty, so its download probably stopped early` means a mosaic is smaller than its own header says. Download it again, as `curl -o` leaves whatever arrived before a dropped connection.
+- On a remote machine, run `view` with `--no-browser` and forward its port, with `ssh -L 8765:127.0.0.1:8765 host`, then open http://127.0.0.1:8765/ on your own. The viewer only listens on the machine it runs on.
+- `operator torchvision::nms does not exist` from `embed` means torch and torchvision came from different builds, usually torch from pytorch.org and torchvision from PyPI. Install both with the same `--index-url`.
+- `Port 8765 is taken` only means another viewer is open, and this one uses a free port instead.
+- `cut` needs memory for a whole field at once, about 31 bytes per pixel over all its bands. If a field doesn't fit, set `tile` to the size `check` suggests. Each field cut at the same time needs that much again, so if something else needs the memory, `--workers 1` cuts one field at a time.

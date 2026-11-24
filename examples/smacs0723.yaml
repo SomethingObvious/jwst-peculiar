@@ -1,0 +1,10 @@
+# Webb's First Deep Field, the public NIRCam mosaics of SMACS 0723 (programme 2736).
+# The README's Try It section downloads them into mosaics/ beside this file.
+name: Webb's First Deep Field
+out: runs/smacs0723
+pattern: mosaics/{field}_nircam_clear-{band}_i2d.fits
+bands: [f090w, f150w, f277w, f444w]
+detect: f277w
+colour: [f277w, f150w, f090w]
+fields: [jw02736-o001_t001]
+device: auto

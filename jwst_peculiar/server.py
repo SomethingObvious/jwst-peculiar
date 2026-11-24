@@ -1,42 +1,98 @@
-"""Opens a run in the web viewer, or exports it as a static site.
-
-    jwst-peculiar view results_miri datasets/miri
-    jwst-peculiar view results_miri datasets/miri --export site/
-
-The first serves the viewer on localhost and saves verdicts to verdicts.csv in the run
-folder. The second writes the viewer and the whole run to a folder that any static
-host can serve, GitHub Pages included, where verdicts stay in each visitor's browser.
-"""
+"""The local server behind `view`, which serves a list and saves its verdicts."""
 
 from __future__ import annotations
 
-import argparse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import logging
 import mimetypes
 from pathlib import Path
+import sys
 import threading
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 from urllib.parse import unquote, urlsplit
 import webbrowser
 
 from typing_extensions import override
 
-from jwst_peculiar.bundle import RunBundle, add_site_meta, export, save_verdict
+from jwst_peculiar.verdicts import save_verdict
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from jwst_peculiar.view import ObjectBundle
 
 APP_DIR = Path(__file__).resolve().parent / "viewer_static"
+logger = logging.getLogger(__name__)
 
-# Windows takes these from the registry, where .js is sometimes text/plain, and a
-# browser won't run a module served as that.
-mimetypes.add_type("text/javascript", ".js")
+
+def built_viewer() -> Path:
+    """Return the folder of the built viewer.
+
+    Returns:
+        APP_DIR.
+
+    Raises:
+        SystemExit: If the viewer hasn't been built.
+    """
+    if not (APP_DIR / "index.html").is_file():
+        msg = (
+            f"The viewer isn't built, as {APP_DIR / 'index.html'} is missing. "
+            "Run `npm ci && npm run build` in web/."
+        )
+        raise SystemExit(msg)
+    return APP_DIR
+
+
+def serve(bundle: ObjectBundle, *, port: int, browser: bool) -> None:
+    """Serve `bundle` and the viewer on localhost until Ctrl+C."""
+    server = open_server(bundle, port)
+    url = f"http://127.0.0.1:{server.server_port}/"
+    logger.info("Serving %d objects at %s, Ctrl+C to stop", len(bundle.tiles), url)
+    if browser:
+        webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+def open_server(bundle: ObjectBundle, port: int) -> Server:
+    """Bind the viewer to `port` on localhost, or to a free port if it's taken.
+
+    Returns:
+        The bound server.
+    """
+    handler = make_handler(bundle)
+    try:
+        return Server(("127.0.0.1", port), handler)
+    except OSError:
+        logger.warning("Port %d is taken, so the viewer is using a free one", port)
+        return Server(("127.0.0.1", 0), handler)
+
+
+class Server(ThreadingHTTPServer):
+    """A server that won't share its port with one already running."""
+
+    # Windows lets a second socket bind a port that has SO_REUSEADDR set, so a
+    # second viewer would quietly share the first one's port.
+    allow_reuse_address = sys.platform != "win32"
+
+
+def make_handler(bundle: ObjectBundle) -> type[BaseHTTPRequestHandler]:
+    """Return a request handler class that serves `bundle` and the viewer."""
+
+    class Handler(_ViewerHandler):
+        pass
+
+    Handler.bundle = bundle
+    Handler.lock = threading.Lock()
+    return Handler
 
 
 class _ViewerHandler(BaseHTTPRequestHandler):
-    bundle: ClassVar[RunBundle]
+    bundle: ClassVar[ObjectBundle]
     lock: ClassVar[threading.Lock]
     # Seconds a request may stall, so a body shorter than its Content-Length can't
     # hold a thread forever.
@@ -84,8 +140,8 @@ class _ViewerHandler(BaseHTTPRequestHandler):
         if "\\" in path or ":" in path:
             raise FileNotFoundError(path)
         if path.startswith("run/"):
-            # Run files are named by rank, so another run on this port reuses the
-            # names and a cached copy would show the wrong tile.
+            # List files are named by rank, so another list on this port reuses the
+            # names and a cached copy would show the wrong object.
             return (*self.bundle.read(path[4:]), False)
         target = (APP_DIR / path).resolve()
         if not target.is_relative_to(APP_DIR) or not target.is_file():
@@ -94,7 +150,7 @@ class _ViewerHandler(BaseHTTPRequestHandler):
         return target.read_bytes(), ctype, path != "index.html"
 
     def do_GET(self) -> None:
-        """Serve a run file under run/, or a file of the built viewer otherwise."""
+        """Serve a list file under run/, or a file of the built viewer otherwise."""
         if self._from_elsewhere():
             self._error(HTTPStatus.FORBIDDEN, "This viewer only answers its own page")
             return
@@ -142,7 +198,7 @@ class _ViewerHandler(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(max(0, min(length, 1 << 20))))
         key = str(body["key"])
         if key not in {t.key for t in self.bundle.tiles}:
-            msg = f"{key} isn't a tile in this run"
+            msg = f"{key} isn't in this list"
             raise KeyError(msg)
         star = body.get("star", False)
         if not isinstance(star, bool):
@@ -156,105 +212,3 @@ class _ViewerHandler(BaseHTTPRequestHandler):
                 star,
                 str(body.get("note") or ""),
             )
-
-
-def make_handler(bundle: RunBundle) -> type[BaseHTTPRequestHandler]:
-    """Return a request handler class that serves `bundle` and the viewer."""
-
-    class Handler(_ViewerHandler):
-        pass
-
-    Handler.bundle = bundle
-    Handler.lock = threading.Lock()
-    return Handler
-
-
-def _parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    ap.add_argument("run_dir", type=Path, help="A `jwst-peculiar run` output folder.")
-    ap.add_argument(
-        "data_root", type=Path, help="The `jwst-peculiar prep` --out folder it scored."
-    )
-    ap.add_argument("--port", type=int, default=8765)
-    ap.add_argument(
-        "--no-browser",
-        dest="browser",
-        action="store_false",
-        help="Don't open a browser tab.",
-    )
-    ap.add_argument(
-        "--export", type=Path, default=None, help="Write a static site here instead."
-    )
-    ap.add_argument(
-        "--cutouts",
-        type=int,
-        default=None,
-        help="With --export, keep the FITS cutouts of only the top N tiles, "
-        "as they're big.",
-    )
-    ap.add_argument(
-        "--name", default=None, help="The run's name in the viewer, its tag otherwise."
-    )
-    ap.add_argument(
-        "--site_url",
-        default=None,
-        help="With --export, where the site will be hosted, "
-        "for its social card and sitemap.",
-    )
-    ap.add_argument("--verbose", action="store_true", help="Log every request.")
-    return ap
-
-
-def main(argv: list[str] | None = None) -> int:
-    """Serve the run in a browser, or export it as a static site with --export.
-
-    Returns:
-        The exit code, which is always 0.
-
-    Raises:
-        SystemExit: If the viewer hasn't been built.
-    """
-    args = _parser().parse_args(argv)
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
-
-    if not (APP_DIR / "index.html").is_file():
-        msg = (
-            f"The viewer isn't built, as {APP_DIR / 'index.html'} is missing. "
-            "Run `npm ci && npm run build` in web/."
-        )
-        raise SystemExit(msg)
-    bundle = RunBundle(args.run_dir, args.data_root, writable=args.export is None)
-    if args.name:
-        index: dict[str, Any] = bundle.index
-        # Browsers file their verdicts under the id, so a new name doesn't orphan them.
-        index["run"]["id"] = index["run"]["name"]
-        index["run"]["name"] = args.name
-
-    if args.export is not None:
-        n = export(bundle, args.export, APP_DIR, cutouts=args.cutouts)
-        if args.site_url:
-            add_site_meta(bundle, args.export, args.site_url)
-        logger.info("Wrote the viewer and %d run files to %s", n, args.export)
-        return 0
-
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(bundle))
-    url = f"http://127.0.0.1:{server.server_port}/"
-    logger.info("Serving %d tiles at %s, Ctrl+C to stop", len(bundle.tiles), url)
-    if args.browser:
-        webbrowser.open(url)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.server_close()
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

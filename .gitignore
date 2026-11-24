@@ -26,4 +26,6 @@ rawfits*/
 models/
 results*/
 bench_*/
+examples/mosaics/
+examples/runs/
 *.log

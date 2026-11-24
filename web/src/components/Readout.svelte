@@ -1,22 +1,10 @@
 <script lang="ts">
   import Glyph from './Glyph.svelte';
   import Locator from './Locator.svelte';
-  import { CMAPS, cssGradient } from '../lib/colormaps';
-  import { rankOf, type Limits, type TileData } from '../lib/tiles';
+  import type { TileData } from '../lib/tiles';
   import type { TileFrame } from '../lib/frame';
-  import {
-    VERDICTS,
-    tileId,
-    type Bundle,
-    type Display,
-    type LimitMode,
-    type Stretch,
-    type Theme,
-    type TileSource,
-    type Verdict,
-  } from '../lib/types';
-  import { catShape, orList, sourceLink } from '../lib/catalogues';
-  import { decDms, icrsToGalactic, raHms, signOf, signed } from '../lib/wcs';
+  import { VERDICTS, type Bundle, type Theme, type Verdict } from '../lib/types';
+  import { decDms, icrsToGalactic, raHms, signed } from '../lib/wcs';
   import type { Verdicts } from '../lib/verdicts.svelte';
 
   let {
@@ -26,14 +14,9 @@
     data,
     frame,
     cursor,
-    display = $bindable(),
-    limits,
     verdicts,
     order,
     theme,
-    sources,
-    learned,
-    alike,
     advance = $bindable(),
     noteEl = $bindable(),
     onselect,
@@ -46,14 +29,9 @@
     data: TileData | null;
     frame: TileFrame | null;
     cursor: { ix: number; iy: number } | null;
-    display: Display;
-    limits: Limits;
     verdicts: Verdicts;
     order: Int32Array;
     theme: Theme;
-    sources: TileSource[];
-    learned: { value: number; from: number } | null;
-    alike: { index: number; cos: number }[];
     advance: boolean;
     noteEl?: HTMLTextAreaElement | undefined;
     onselect: (i: number) => void;
@@ -64,28 +42,19 @@
   const tile = $derived.by(() => {
     const t = bundle.tiles[current];
     if (!t) {
-      throw new Error(`The bundle has no tile ${String(current)}`);
+      throw new Error(`The list has no object ${String(current)}`);
     }
     return t;
   });
   const mosaic = $derived(bundle.mosaics[tile.mosaic]);
-  const grid = $derived(bundle.run.grid);
   const record = $derived(verdicts.map.get(tile.key));
 
-  // With no pointer on the plate the readout follows the peak patch, so it is never empty.
+  // With no pointer on the plate the readout shows the stamp's centre, so it is never empty.
   const probe = $derived.by(() => {
     if (cursor) {
       return { ...cursor, live: true };
     }
-    if (!data) {
-      return null;
-    }
-    const [rows, cols] = grid;
-    return {
-      ix: ((tile.peak[1] + 0.5) * data.width) / cols,
-      iy: ((tile.peak[0] + 0.5) * data.height) / rows,
-      live: false,
-    };
+    return data ? { ix: data.width / 2, iy: data.height / 2, live: false } : null;
   });
 
   const read = $derived.by(() => {
@@ -96,198 +65,16 @@
     const py = Math.floor(probe.iy);
     const [mx, my] = frame.toMosaic(px + 0.5, py + 0.5);
     const sky = frame.toSky(px + 0.5, py + 0.5);
-    const i = py * data.width + px;
-    let values: number[];
-    // A pixel past the edge reads as NaN, which shows as no data.
-    if (data.planes) {
-      values = data.planes.map((p) => p[i] ?? NaN);
-    } else {
-      // Without planes the tile came from the PNG, so rgba is set.
-      const rgba = data.rgba ?? new Uint8Array(0);
-      const at = (k: number) => rgba[i * 4 + k] ?? NaN;
-      values = data.channels === 3 ? [at(0), at(1), at(2)] : [at(0)];
-    }
-    const [rows, cols] = grid;
-    const pr = Math.min(rows - 1, Math.floor((probe.iy / data.height) * rows));
-    const pc = Math.min(cols - 1, Math.floor((probe.ix / data.width) * cols));
-    const patch = pr * cols + pc;
-    const dist = data.map2?.[patch] ?? NaN;
-    const dist1 = data.map1 ? (data.map1[patch] ?? NaN) : null;
     return {
       px,
       py,
       mx,
       my,
       sky: sky ? { ra: sky[0], dec: sky[1], gal: icrsToGalactic(...sky) } : null,
-      values,
-      pr,
-      pc,
-      dist,
-      dist1,
-      pct: rankOf(data.map2Sorted, dist) * 100,
     };
   });
 
-  // The catalogued source nearest the probe, if one is within an arcsecond.
-  const near = $derived.by(() => {
-    if (!probe || !data || !mosaic || !sources.length) {
-      return null;
-    }
-    const scale = (mosaic.pixel_scale_arcsec * tile.size) / data.width;
-    let best: { s: TileSource; sep: number } | null = null;
-    for (const s of sources) {
-      const sep =
-        Math.hypot(s[4] * data.width - probe.ix, s[5] * data.height - probe.iy) * scale;
-      if (sep <= 1 && (!best || sep < best.sep)) {
-        best = { s, sep };
-      }
-    }
-    return best;
-  });
-  const fmtSep = (sep: number) =>
-    sep >= 60
-      ? `${(sep / 60).toFixed(1)}\u2032`
-      : `${sep.toFixed(sep < 10 ? 2 : 1)}\u2033`;
-  const xm = $derived(bundle.run.xmatch ?? null);
-  const alikeTiles = $derived(
-    alike.flatMap((a) => {
-      const t = bundle.tiles[a.index];
-      return t ? [{ a, t }] : [];
-    }),
-  );
-
-  const fmtVal = (v: number) => {
-    if (!Number.isFinite(v)) {
-      return 'no data';
-    }
-    if (!data?.planes) {
-      return String(v);
-    }
-    const a = Math.abs(v);
-    return a !== 0 && (a < 1e-3 || a >= 1e5)
-      ? (v < 0 ? signOf(v) : '') + a.toExponential(3)
-      : signed(v, a >= 100 ? 2 : 4);
-  };
-  const channelNames = $derived.by(() => {
-    if (data?.channels !== 3) {
-      return [mosaic?.filters[0] ?? 'Value'];
-    }
-    return mosaic?.filters.length === 3 ? mosaic.filters : ['R', 'G', 'B'];
-  });
-
-  const delta = $derived(
-    tile.score !== null && tile.score_pass1 !== undefined
-      ? tile.score - tile.score_pass1
-      : null,
-  );
   const arcsec = $derived((mosaic?.pixel_scale_arcsec ?? 0) * tile.size);
-  const referenceNote = $derived.by(() => {
-    if (bundle.run.reference_fields?.length) {
-      return 'Scored against other fields';
-    }
-    return tile.in_reference ? 'In the pass 2 reference set' : 'Not a reference tile';
-  });
-  const fmtP = (v: number) => (v < 0.001 ? v.toExponential(1) : v.toFixed(3));
-  const ran = $derived.by(() => {
-    const r = bundle.run.args['ran'] as
-      | {
-          dtype?: string;
-          compiled?: boolean;
-          streamed?: boolean;
-          fast_accumulate?: boolean;
-        }
-      | undefined;
-    if (!r?.dtype) {
-      return '';
-    }
-    let how = '';
-    if (r.streamed) {
-      how = ', a layer at a time from disk';
-    } else if (r.compiled) {
-      how = ', compiled';
-    }
-    return `Ran in ${r.dtype}${how}${r.fast_accumulate ? ' with fp16 sums' : ''}`;
-  });
-
-  const STRETCHES: { id: Stretch; label: string }[] = [
-    { id: 'linear', label: 'Linear' },
-    { id: 'sqrt', label: 'Sqrt' },
-    { id: 'log', label: 'Log' },
-    { id: 'asinh', label: 'Asinh' },
-    { id: 'histeq', label: 'Hist Eq' },
-  ];
-  const LIMITS: { id: LimitMode; label: string }[] = [
-    { id: 'minmax', label: 'Min Max' },
-    { id: 'p995', label: '99.5%' },
-    { id: 'p99', label: '99%' },
-    { id: 'p95', label: '95%' },
-    { id: 'zscale', label: 'ZScale' },
-    { id: 'manual', label: 'Manual' },
-  ];
-
-  function setManual(plane: number, which: 'lo' | 'hi', value: string) {
-    const v = parseFloat(value);
-    if (!Number.isFinite(v)) {
-      return;
-    }
-    const next = { lo: [...limits.lo], hi: [...limits.hi] };
-    next[which][plane] = v;
-    display.lo = next.lo;
-    display.hi = next.hi;
-    display.limitMode = 'manual';
-  }
-
-  // One histogram line per plane, on a shared axis, with the limits marked.
-  const hist = $derived.by(() => {
-    if (!data?.samples[0]?.length) {
-      return null;
-    }
-    // The axis covers the display window with a margin either side, so the limits always show.
-    const wlo = Math.min(...limits.lo);
-    const whi = Math.max(...limits.hi);
-    const pad = (whi - wlo || 1) * 0.15;
-    const lo = wlo - pad;
-    const hi = whi + pad;
-    const span = hi - lo || 1;
-    const at = (v: number) => Math.max(0, Math.min(100, ((v - lo) / span) * 100));
-    const paths = data.samples.map((s) => {
-      const bins = new Array<number>(72).fill(0);
-      for (const v of s) {
-        const k = Math.floor(((v - lo) / span) * bins.length);
-        if (k >= 0 && k < bins.length) {
-          bins[k] = (bins[k] ?? 0) + 1;
-        }
-      }
-      // Or 1, as a sample that's all NaN leaves every bin empty.
-      const top = Math.log1p(Math.max(...bins)) || 1;
-      return bins
-        .map(
-          (c, k) =>
-            `${k === 0 ? 'M' : 'L'}${String((k / (bins.length - 1)) * 100)} ${String(30 - (Math.log1p(c) / top) * 28)}`,
-        )
-        .join(' ');
-    });
-    return { paths, lo: limits.lo.map(at), hi: limits.hi.map(at) };
-  });
-
-  const fmtLimit = (v: number) => {
-    if (Math.abs(v) >= 1000) {
-      return v.toFixed(1);
-    }
-    return Math.abs(v) >= 1 ? v.toFixed(4) : v.toPrecision(4);
-  };
-
-  let headerQuery = $state('');
-  const cards = $derived.by(() => {
-    const q = headerQuery.trim().toLowerCase();
-    const all = Object.entries(mosaic?.header ?? {});
-    return q
-      ? all.filter(
-          ([k, v]) => k.toLowerCase().includes(q) || v.toLowerCase().includes(q),
-        )
-      : all;
-  });
-
   // Note, saved after a pause in typing and whenever the tile changes.
   let draft = $state('');
   let draftKey = '';
@@ -394,8 +181,8 @@
     }
     try {
       const { taken, skipped } = verdicts.importText(await f.text());
-      const left = skipped ? ` Left out ${String(skipped)} not in this run.` : '';
-      importMsg = `Took ${String(taken)} ${taken === 1 ? 'tile' : 'tiles'} from ${f.name}.${left}`;
+      const left = skipped ? ` Left out ${String(skipped)} not in this list.` : '';
+      importMsg = `Took ${String(taken)} ${taken === 1 ? 'object' : 'objects'} from ${f.name}.${left}`;
     } catch (err) {
       importMsg = `Couldn't read ${f.name}. ${err instanceof Error ? err.message : String(err)}`;
     }
@@ -414,12 +201,12 @@
 <aside class="readout" aria-label="Readout">
   <section class="block">
     {@render head(
-      probe?.live ? 'Cursor' : 'Peak Patch',
+      probe?.live ? 'Cursor' : 'Centre',
       probe?.live ? undefined : 'pointer off plate',
     )}
     {#if read}
       <dl class="facts">
-        <dt>Tile px</dt>
+        <dt>Stamp px</dt>
         <dd class="num">{read.px}, {read.py}</dd>
         <dt>Mosaic px</dt>
         <dd class="num">{read.mx.toFixed(1)}, {read.my.toFixed(1)}</dd>
@@ -444,43 +231,14 @@
           <dt>Sky</dt>
           <dd class="dim">This mosaic has no WCS the viewer reads.</dd>
         {/if}
-        <dt>Value</dt>
-        <dd class="num values">
-          {#each read.values as v, k (k)}
-            <span><i>{channelNames[k]}</i> {fmtVal(v)}</span>
-          {/each}
-          <span class="dim unit">{data?.bunit}</span>
-        </dd>
-        <dt>Patch</dt>
-        <dd class="num">
-          r{read.pr} c{read.pc} <span class="gap"></span>
-          <b>{Number.isNaN(read.dist) ? 'no map' : read.dist.toFixed(4)}</b>
-          {#if read.dist1 !== null}<span class="sub"
-              >pass 1 {read.dist1.toFixed(4)}</span
-            >{/if}
-        </dd>
-        {#if !Number.isNaN(read.dist)}
-          <dt>Percentile</dt>
-          <dd class="num">
-            <span class="pbar"><i style:width="{read.pct}%"></i></span
-            >{read.pct.toFixed(1)} within tile
-          </dd>
-        {/if}
-        {#if near}
-          <dt>Source</dt>
-          <dd>
-            <span class="catname">{near.s[0]}</span>
-            {near.s[1]} <span class="dim num">{fmtSep(near.sep)}</span>
-          </dd>
-        {/if}
       </dl>
     {:else}
-      <p class="quiet">Waiting for the tile to load.</p>
+      <p class="quiet">Waiting for the stamp to load.</p>
     {/if}
   </section>
 
   <section class="block">
-    {@render head('Candidate')}
+    {@render head('Object')}
     <dl class="facts">
       <dt>Rank</dt>
       <dd class="num">
@@ -490,47 +248,11 @@
       <dt>Score</dt>
       <dd class="num">
         {#if tile.score === null}<b>unscored</b>
-          <span class="dim">no reference tile was left to compare with</span>{:else}<b
+          <span class="dim">nothing was left to compare it with</span>{:else}<b
             >{tile.score.toFixed(4)}</b
-          > <span class="dim">{bundle.run.score_mode}</span>{/if}
+          >{/if}
       </dd>
-      {#if tile.p !== undefined && tile.q !== undefined}
-        <dt>Significance</dt>
-        <dd class="num">
-          <b>p {fmtP(tile.p)}</b> <b>q {fmtP(tile.q)}</b><span class="sub words"
-            >Against {(bundle.run.n_calibration ?? 0).toLocaleString('en-CA')} tiles of {bundle
-              .run.reference_fields?.length ?? 0} other fields, each scored against the rest,
-            so p can't go below
-            <span class="nowrap">{fmtP(1 / ((bundle.run.n_calibration ?? 0) + 1))}</span
-            ></span
-          >
-        </dd>
-      {/if}
-      {#if tile.score_pass1 !== undefined && delta !== null}
-        <dt>Pass 1</dt>
-        <dd class="num">
-          {tile.score_pass1.toFixed(4)}
-          <span class="delta" class:up={delta > 0}
-            >{delta > 0 ? '+' : ''}{signed(delta, 4)}</span
-          >
-        </dd>
-      {/if}
-      {#if learned}
-        <dt>Learned</dt>
-        <dd>
-          {#if learned.from}<b class="num">{learned.value.toFixed(2)}</b>
-            <span class="dim"
-              >from {learned.from}
-              {learned.from === 1 ? 'verdict' : 'verdicts'}, 0.5 is neutral</span
-            >
-          {:else}<span class="dim">No verdicts to learn from yet</span>{/if}
-        </dd>
-      {/if}
-      <dt>Reference</dt>
-      <dd>
-        {referenceNote}
-      </dd>
-      <dt>Mosaic</dt>
+      <dt>Field</dt>
       <dd class="name mosaic" title={tile.mosaic}>{tile.mosaic}</dd>
       <dt>Centre</dt>
       <dd class="num">
@@ -543,103 +265,16 @@
         {tile.size} px <span class="gap"></span>
         {arcsec.toFixed(2)}&Prime;
       </dd>
-      <dt>Peak</dt>
-      <dd>
-        <span class="num"
-          ><svg
-            class="peakring"
-            width="14"
-            height="14"
-            viewBox="-7 -7 14 14"
-            aria-hidden="true"
-            ><circle r="3.5" /><path
-              d="M0 -6.5 V-5 M0 5 V6.5 M-6.5 0 H-5 M5 0 H6.5"
-            /></svg
-          >r{tile.peak[0]} c{tile.peak[1]}
-          <span class="dim">of {grid[0]} &times; {grid[1]}</span></span
-        >
-        <span class="dim small under"
-          >The patch furthest from the reference, ringed on the plate.</span
-        >
-      </dd>
-      {#if tile.owned}
-        {@const [r0, r1, c0, c1] = tile.owned}
-        <dt>Scored</dt>
-        <dd>
-          <span class="num">{r1 - r0 + 1} &times; {c1 - c0 + 1}</span> patches inside
-          the dashed outline
-          <span class="dim small under"
-            >Overlapping tiles score the rest, each the part nearest its own centre.</span
-          >
-        </dd>
-      {/if}
       <dt>Pixels</dt>
       <dd>
         {#if data}
-          {data.source === 'cutout' ? 'FITS cutout' : 'PNG'}
-          <span class="num">{data.width} &times; {data.height}</span>{data.channels ===
-          3
-            ? ', RGB'
-            : ''}
-          {#if data.fallback}<span class="warn"
-              >The cutout failed ({data.fallback}), so this is the PNG.</span
-            >{/if}
-          {#if data.mapError}<span class="warn">{data.mapError}</span>{/if}
+          <span class="num">{data.width} &times; {data.height}</span>
         {:else}
           <span class="dim">Loading</span>
         {/if}
       </dd>
     </dl>
   </section>
-
-  {#if xm}
-    <section class="block">
-      {@render head('Catalogues', `${String(xm.radius_arcsec)}\u2033 match radius`)}
-      {#if tile.xmatch}
-        {#if tile.xmatch.uncatalogued}
-          <p class="lead new">
-            <b>Uncatalogued.</b> Nothing in {orList(xm.checked)} lies within {xm.radius_arcsec}&Prime;
-            of the peak.
-          </p>
-        {/if}
-        <ul class="matches">
-          {#each xm.checked as cat (cat)}
-            {@const m = tile.xmatch.nearest[cat]}
-            {@const href = m ? sourceLink(cat, m.name) : null}
-            <li class:hit={m !== undefined && m.sep <= xm.radius_arcsec}>
-              <svg width="12" height="12" viewBox="-6 -6 12 12" aria-hidden="true"
-                ><path d={catShape(cat)} /></svg
-              >
-              <span class="catname">{cat}</span>
-              {#if m}
-                <span class="who">
-                  {#if href}<a {href} target="_blank" rel="noopener noreferrer"
-                      >{m.name}</a
-                    >{:else}{m.name}{/if}
-                  {#if m.type || m.note}<span class="dim"
-                      >{[m.type, m.note].filter(Boolean).join(', ')}</span
-                    >{/if}
-                </span>
-                <span class="num sep">{fmtSep(m.sep)}</span>
-              {:else}
-                <span class="who dim">Nothing over this mosaic</span>
-              {/if}
-            </li>
-          {/each}
-        </ul>
-        <p class="quiet">
-          The nearest source to the peak in each.
-          {#if sources.length}{sources.length} catalogued {sources.length === 1
-              ? 'source lies'
-              : 'sources lie'} on this tile, marked on the plate.{/if}
-          {#if xm.failed.length}{orList(xm.failed)} couldn't be reached when this run was
-            matched, so {xm.failed.length === 1 ? 'it was' : 'they were'} left out.{/if}
-        </p>
-      {:else}
-        <p class="quiet">This tile's mosaic has no WCS, so it wasn't matched.</p>
-      {/if}
-    </section>
-  {/if}
 
   <section class="block">
     {@render head(
@@ -691,7 +326,7 @@
     </label>
     <div class="saverow">
       <label class="check"
-        ><input type="checkbox" bind:checked={advance} /> Next tile after a verdict</label
+        ><input type="checkbox" bind:checked={advance} /> Next object after a verdict</label
       >
     </div>
     {#if !bundle.writable}
@@ -715,187 +350,13 @@
     {/if}
   </section>
 
-  {#if alike.length}
-    <section class="block">
-      {@render head('Similar Tiles', 'cosine')}
-      <div class="alike" class:neg={theme === 'plate'}>
-        {#each alikeTiles as { a, t } (a.index)}
-          {@const v = verdicts.map.get(t.key)}
-          <button
-            class="thumb"
-            onclick={() => {
-              onselect(a.index);
-            }}
-            title="Rank {t.rank}, cosine {a.cos.toFixed(3)}"
-          >
-            <img
-              src="{base}tiles/{tileId(a.index)}.png"
-              alt="Tile ranked {t.rank}"
-              loading="lazy"
-              decoding="async"
-            />
-            <span class="cap">
-              <span class="num">{t.rank}</span>
-              <Glyph verdict={v?.verdict ?? null} size={9} />
-              <span class="num dim">{a.cos.toFixed(2)}</span>
-            </span>
-          </button>
-        {/each}
-      </div>
-      <p class="quiet">
-        Closest by the descriptor of each tile's most anomalous patches. A verdict here
-        moves every tile like it once the index is sorted by Learned.
-      </p>
-    </section>
-  {/if}
-
   <section class="block">
-    {@render head('Mosaic Locator')}
+    {@render head('Field Locator')}
     <Locator {bundle} {base} {current} {order} {theme} {onselect} />
   </section>
 
   <section class="block">
-    {@render head('Display', data?.channels === 3 ? 'RGB' : undefined)}
-    {#if data && !data.planes}
-      <p class="quiet">
-        This tile has no FITS cutout, so it shows the 8-bit PNG as it was cut. Stretch
-        and limits need a cutout.
-      </p>
-    {/if}
-    <div class="field">
-      <span class="fl label">Stretch</span>
-      <div class="seg wrap" role="group" aria-label="Stretch">
-        {#each STRETCHES as s (s.id)}
-          <button
-            class="ctl"
-            aria-pressed={display.stretch === s.id}
-            disabled={data !== null && !data.planes}
-            onclick={() => (display.stretch = s.id)}>{s.label}</button
-          >
-        {/each}
-      </div>
-    </div>
-    <div class="field">
-      <span class="fl label">Limits</span>
-      <div class="seg wrap" role="group" aria-label="Limits">
-        {#each LIMITS as m (m.id)}
-          <button
-            class="ctl"
-            aria-pressed={display.limitMode === m.id}
-            disabled={data !== null && !data.planes}
-            onclick={() => {
-              if (m.id === 'manual') {
-                display.lo = [...limits.lo];
-                display.hi = [...limits.hi];
-              }
-              display.limitMode = m.id;
-            }}>{m.label}</button
-          >
-        {/each}
-      </div>
-    </div>
-    {#if hist}
-      <svg
-        class="hist"
-        class:rgb={hist.paths.length === 3}
-        viewBox="0 0 100 32"
-        preserveAspectRatio="none"
-        aria-hidden="true"
-      >
-        {#each hist.paths as d, c (c)}
-          <rect
-            class="win p{c}"
-            x={hist.lo[c]}
-            width={Math.max(0.5, (hist.hi[c] ?? NaN) - (hist.lo[c] ?? NaN))}
-            y={c * 2}
-            height={32 - c * 4}
-          />
-          <path class="p{c}" {d} />
-          <line class="p{c}" x1={hist.lo[c]} x2={hist.lo[c]} y1="0" y2="32" />
-          <line class="p{c}" x1={hist.hi[c]} x2={hist.hi[c]} y1="0" y2="32" />
-        {/each}
-      </svg>
-    {/if}
-    <div class="limits" class:rgb={limits.lo.length === 3}>
-      <span></span>
-      <span class="label">Low</span>
-      <span class="label">High</span>
-      {#each limits.lo as lo, c (c)}
-        <span class="band num">{channelNames[c]}</span>
-        <input
-          class="ctl num"
-          type="number"
-          step="any"
-          aria-label="{channelNames[c]} low"
-          disabled={!data?.planes}
-          value={fmtLimit(lo)}
-          onchange={(e) => {
-            setManual(c, 'lo', e.currentTarget.value);
-          }}
-        />
-        <input
-          class="ctl num"
-          type="number"
-          step="any"
-          aria-label="{channelNames[c]} high"
-          disabled={!data?.planes}
-          value={fmtLimit(limits.hi[c] ?? NaN)}
-          onchange={(e) => {
-            setManual(c, 'hi', e.currentTarget.value);
-          }}
-        />
-      {/each}
-      <span></span>
-      <span class="unit dim">{data?.bunit ?? ''}</span>
-    </div>
-    <div class="field">
-      <span class="fl label">Colour</span>
-      <div class="cmap">
-        <select
-          class="ctl"
-          bind:value={display.cmap}
-          disabled={data?.channels === 3 && !display.mono}
-          aria-label="Colour map"
-        >
-          {#each CMAPS as c (c.id)}
-            <option value={c.id}>{c.label}</option>
-          {/each}
-        </select>
-        <i
-          class="swatch"
-          style:background={data?.channels === 3 && !display.mono
-            ? 'linear-gradient(90deg, #d33 0 33%, #3b3 33% 66%, #36d 66%)'
-            : cssGradient(display.cmap, display.invert)}
-        ></i>
-        <label class="check"
-          ><input type="checkbox" bind:checked={display.invert} /> Invert</label
-        >
-      </div>
-    </div>
-    {#if data?.channels === 3}
-      <div class="field">
-        <span class="fl label">Bands</span>
-        <div class="seg" role="group" aria-label="Colour or one band">
-          <button
-            class="ctl"
-            aria-pressed={!display.mono}
-            onclick={() => (display.mono = false)}>RGB</button
-          >
-          <button
-            class="ctl"
-            aria-pressed={display.mono}
-            onclick={() => (display.mono = true)}>Mean Through Map</button
-          >
-        </div>
-      </div>
-      <p class="quiet">
-        {channelNames.join(', ')} share the stretch, and each band gets its own limits.
-      </p>
-    {/if}
-  </section>
-
-  <section class="block">
-    {@render head('Links Out', 'tile centre')}
+    {@render head('Links Out', 'object centre')}
     <ul class="links">
       {#each links as l (l.label)}
         <li>
@@ -934,54 +395,12 @@
   </section>
 
   <section class="block">
-    {@render head('Header', `${String(cards.length)} cards`)}
-    <input
-      class="ctl hq"
-      type="search"
-      aria-label="Search the FITS header"
-      placeholder="Search keywords and values"
-      bind:value={headerQuery}
-      spellcheck="false"
-    />
-    <div class="cards">
-      {#each cards as [k, v] (k)}
-        <div class="card">
-          <span class="k num">{k}</span><span class="v num">{v}</span>
-        </div>
-      {:else}
-        <p class="quiet">No header card matches {headerQuery}.</p>
-      {/each}
-    </div>
-  </section>
-
-  <section class="block">
-    {@render head('Run')}
+    {@render head('List')}
     <dl class="facts">
       <dt>Name</dt>
       <dd class="name">{bundle.run.name}</dd>
-      <dt>Model</dt>
-      <dd class="num small">
-        {bundle.run.model}{#if ran}<span class="sub words">{ran}</span>{/if}
-      </dd>
-      <dt>Detector</dt>
-      {#if bundle.run.reference_fields?.length}
-        <dd>
-          {bundle.run.detector} against {bundle.run.n_reference.toLocaleString('en-CA')} tiles
-          of {bundle.run.reference_fields.join(', ')}
-        </dd>
-      {:else}
-        <dd>
-          {bundle.run.detector}, {bundle.run.passes}
-          {bundle.run.passes === 1 ? 'pass' : 'passes'}, {bundle.run.n_reference.toLocaleString(
-            'en-CA',
-          )} references
-        </dd>
-      {/if}
-      <dt>Backbone</dt>
-      <dd class="num">
-        {bundle.run.resolution} px, patch {bundle.run.patch_size}, grid {grid[0]} &times;
-        {grid[1]}
-      </dd>
+      <dt>Written</dt>
+      <dd class="num">{bundle.run.created.slice(0, 10)}</dd>
     </dl>
   </section>
 </aside>
@@ -1052,12 +471,6 @@
     display: block;
     color: var(--chalk-3);
   }
-  dd .words {
-    font-family: var(--font-label);
-  }
-  .nowrap {
-    white-space: nowrap;
-  }
   .dim {
     color: var(--chalk-3);
   }
@@ -1065,47 +478,9 @@
     display: inline-block;
     width: 8px;
   }
-  .values {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2px 10px;
-  }
-  .values i {
-    font-style: normal;
-    color: var(--chalk-3);
-  }
-  .values .unit {
-    display: inline;
-  }
-  .pbar {
-    display: inline-block;
-    width: 48px;
-    height: 3px;
-    background: var(--bar-track);
-    vertical-align: middle;
-    margin-right: 8px;
-    position: relative;
-  }
-  .pbar i {
-    position: absolute;
-    inset: 0 auto 0 0;
-    background: var(--bar);
-  }
-  .delta {
-    color: var(--chalk-2);
-    margin-left: 6px;
-  }
-  .delta.up {
-    color: var(--anno);
-  }
   .mosaic {
     font-size: 13.5px;
     overflow-wrap: anywhere;
-  }
-  .warn {
-    display: block;
-    color: var(--chalk-2);
-    font-size: 11px;
   }
   .quiet {
     margin: 0;
@@ -1115,113 +490,9 @@
   .small {
     font-size: 11px;
   }
-  .under {
-    display: block;
-    margin-top: 2px;
-  }
-  .peakring {
-    vertical-align: -2px;
-    margin-right: 6px;
-  }
-  .peakring circle,
-  .peakring path {
-    fill: none;
-    stroke: var(--ring);
-    stroke-width: 1.5;
-  }
-  .field {
-    display: grid;
-    grid-template-columns: 62px 1fr;
-    gap: 8px;
-    align-items: start;
-  }
   .fl {
     color: var(--chalk-3);
     padding-top: 6px;
-  }
-  .seg {
-    display: flex;
-  }
-  .seg.wrap {
-    flex-wrap: wrap;
-    gap: 4px;
-  }
-  .seg .ctl {
-    padding: 0 7px;
-    font-size: 11.5px;
-  }
-  .seg:not(.wrap) .ctl + .ctl {
-    margin-left: -1px;
-  }
-  .hist {
-    width: 100%;
-    height: 34px;
-    display: block;
-    border-bottom: 1px solid var(--rule);
-  }
-  .hist path {
-    fill: none;
-    stroke: var(--chalk-2);
-    stroke-width: 1;
-    vector-effect: non-scaling-stroke;
-  }
-  .hist line {
-    stroke: var(--anno);
-    stroke-width: 1;
-    vector-effect: non-scaling-stroke;
-  }
-  .hist .win {
-    fill: var(--anno-wash);
-  }
-  .limits {
-    display: grid;
-    grid-template-columns: 62px 1fr 1fr;
-    gap: 4px 8px;
-    align-items: center;
-  }
-  .limits > .label {
-    color: var(--chalk-3);
-    font-size: 9.5px;
-  }
-  .band {
-    color: var(--chalk-3);
-    font-size: 10.5px;
-  }
-  .limits input {
-    width: 100%;
-    min-width: 0;
-    color: var(--anno);
-    padding: 0 6px;
-    height: 24px;
-  }
-  .limits .unit {
-    font-size: 10.5px;
-    grid-column: 2 / 4;
-  }
-  .hist.rgb .p0 {
-    stroke: #e0605a;
-  }
-  .hist.rgb .p1 {
-    stroke: #5fbf6a;
-  }
-  .hist.rgb .p2 {
-    stroke: #6a8fe6;
-  }
-  .hist.rgb .win {
-    fill: none;
-  }
-  .cmap {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .cmap select {
-    width: 96px;
-  }
-  .swatch {
-    flex: 1;
-    height: 8px;
-    border: 1px solid var(--rule);
   }
   .check {
     display: inline-flex;
@@ -1298,94 +569,7 @@
   .file:focus-within {
     outline: 1px solid var(--anno);
   }
-  .catname {
-    color: var(--chalk-3);
-    font-size: 11px;
-  }
-  .lead {
-    margin: 0;
-    line-height: 1.45;
-  }
-  .lead.new b {
-    color: var(--cat);
-    font-weight: 500;
-  }
-  .matches {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: grid;
-    gap: 4px;
-  }
-  .matches li {
-    display: grid;
-    grid-template-columns: 12px 62px minmax(0, 1fr) auto;
-    gap: 8px;
-    align-items: baseline;
-  }
   /* Centred on the first line, as a wrapped name makes the row several lines tall. */
-  .matches svg {
-    align-self: start;
-    margin-top: calc((1lh - 12px) / 2);
-    overflow: visible;
-  }
-  .matches path {
-    fill: none;
-    stroke: var(--cat);
-    stroke-width: 1.25;
-  }
-  .who {
-    min-width: 0;
-    overflow-wrap: anywhere;
-  }
-  .who .dim {
-    display: block;
-    font-size: 11px;
-  }
-  .sep {
-    color: var(--chalk-2);
-  }
-  .matches li.hit .sep {
-    color: var(--anno);
-  }
-  .alike {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 6px;
-  }
-  .thumb {
-    display: grid;
-    gap: 3px;
-    padding: 0;
-    border: 1px solid var(--rule);
-    background: var(--ground-sunk);
-    cursor: pointer;
-    color: var(--chalk);
-  }
-  .thumb:hover,
-  .thumb:focus-visible {
-    border-color: var(--anno);
-    outline: none;
-  }
-  .thumb img {
-    width: 100%;
-    aspect-ratio: 1;
-    display: block;
-    object-fit: cover;
-  }
-  .neg img {
-    filter: grayscale(1) invert(1);
-  }
-  .cap {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    padding: 0 5px 3px;
-    font-size: 10.5px;
-  }
-  .cap .dim {
-    margin-left: auto;
-  }
   .links {
     list-style: none;
     margin: 0;
@@ -1404,39 +588,9 @@
   .links a:hover {
     text-decoration: underline;
   }
-  .hq {
-    width: 100%;
-  }
-  .cards {
-    max-height: 240px;
-    overflow-y: auto;
-    border-top: 1px solid var(--rule);
-  }
-  .card {
-    display: grid;
-    grid-template-columns: 82px 1fr;
-    gap: 8px;
-    padding: 2px 0;
-    border-bottom: 1px solid var(--rule);
-    font-size: 11px;
-  }
-  .card .k {
-    color: var(--anno);
-    font-size: 11px;
-  }
-  .card .v {
-    color: var(--chalk);
-    overflow-wrap: anywhere;
-    font-size: 11px;
-  }
   @media (pointer: coarse) {
     .check,
     .links a {
-      min-height: 44px;
-    }
-    .who a {
-      display: inline-flex;
-      align-items: center;
       min-height: 44px;
     }
   }

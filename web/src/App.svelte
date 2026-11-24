@@ -4,52 +4,30 @@
   import Plate from './components/Plate.svelte';
   import Readout from './components/Readout.svelte';
   import { TileFrame } from './lib/frame';
-  import type { Renderer } from './lib/gl';
   import { TileCache } from './lib/cache';
-  import { computeLimits, type Limits, type TileData } from './lib/tiles';
-  import { VERDICT_VALUE, learnedValue, priority, similar, valueAt } from './lib/learn';
+  import type { TileData } from './lib/tiles';
   import {
     VERDICTS,
-    tileId,
     type Bundle,
-    type Display,
     type Filters,
     type SortKey,
     type Theme,
     type TileInfo,
-    type TileSource,
     type Verdict,
     type VerdictRecord,
   } from './lib/types';
   import { Verdicts } from './lib/verdicts.svelte';
   import { tanOf, type Tan } from './lib/wcs';
-  import { parseRank, readDisplay, runBase } from './lib/checks';
+  import { parseRank, runBase } from './lib/checks';
 
   const params = new URLSearchParams(location.search);
   const asked = runBase(params.get('run'), location.href);
   const base = asked ?? './run/';
 
   const PREFS = 'jwst-peculiar:prefs';
-  const defaults: Display = {
-    stretch: 'asinh',
-    limitMode: 'p995',
-    lo: [0],
-    hi: [1],
-    cmap: 'grey',
-    invert: false,
-    mono: false,
-    overlay: true,
-    overlayOpacity: 0.45,
-    overlayCmap: 'inferno',
-    threshold: 0.6,
-    source: 'pass2',
-    contours: false,
-    catalogues: true,
-  };
   const saved = (() => {
     try {
       return JSON.parse(localStorage.getItem(PREFS) ?? '{}') as {
-        display?: Partial<Display>;
         theme?: Theme;
         advance?: boolean;
       };
@@ -62,11 +40,8 @@
   let loadError = $state<string | null>(null);
   let verdicts = $state.raw<Verdicts | null>(null);
   let cache: TileCache | null = null;
-  let renderer: Renderer | null = null;
   let wcs = new Map<string, Tan | null>();
 
-  // load() checks the map source again once it knows how many passes the run has.
-  let display = $state<Display>(readDisplay(saved.display, defaults, 2));
   let theme = $state<Theme>(
     saved.theme && ['atlas', 'plate', 'classic'].includes(saved.theme)
       ? saved.theme
@@ -76,19 +51,12 @@
   let filters = $state<Filters>({
     text: '',
     verdict: 'all',
-    match: 'all',
     mosaic: '',
     scoreMin: null,
     scoreMax: null,
-    qMax: null,
     sort: 'rank',
     desc: false,
   });
-  let embedding = $state.raw<Float32Array | null>(null);
-  let sources = $state.raw<TileSource[]>([]);
-  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a cache, sources is the state the UI reads
-  const sourceCache = new Map<number, TileSource[]>();
-
   let current = $state(0);
   const tile = $derived(bundle?.tiles[current]);
   let data = $state.raw<TileData | null>(null);
@@ -120,7 +88,7 @@
   });
 
   $effect(() => {
-    const snapshot = JSON.stringify({ display, theme, advance });
+    const snapshot = JSON.stringify({ theme, advance });
     try {
       localStorage.setItem(PREFS, snapshot);
     } catch {
@@ -153,36 +121,13 @@
       }
       // The file comes from outside, so its shape is checked rather than trusted.
       if (!Array.isArray(b.tiles) || b.tiles.length === 0) {
-        throw new Error('index.json lists no tiles');
+        throw new Error('index.json lists no objects');
       }
       wcs = new Map(Object.entries(b.mosaics).map(([k, m]) => [k, tanOf(m.wcs)]));
-      display = readDisplay(saved.display, defaults, b.run.passes);
       const v = new Verdicts(b, base);
       await v.load();
-      const width = b.run.embedding_dims ?? 0;
-      if (width) {
-        // Only similar tiles and the Learned sort use it, so nothing waits for it.
-        fetch(`${base}embedding.f32`)
-          .then((r) =>
-            r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status))),
-          )
-          .then((buf) => {
-            const e = new Float32Array(buf);
-            if (e.length === b.tiles.length * width) {
-              embedding = e;
-            }
-          })
-          .catch(() => {
-            // Without it the viewer just has no similar tiles.
-          });
-      }
       verdicts = v;
-      cache = new TileCache(
-        base,
-        b,
-        (d) => renderer?.upload(d, b.run.grid),
-        (i) => renderer?.evict(i),
-      );
+      cache = new TileCache(base);
       current = Math.max(0, hashTile(b));
       bundle = b;
       document.title = `${b.run.name} · jwst-peculiar`;
@@ -224,51 +169,14 @@
 
   const indexOfKey = $derived(new Map(bundle?.tiles.map((t, i) => [t.key, i]) ?? []));
 
-  // Verdicts as values to learn from, by tile index.
-  const labels = $derived(
-    new Map(
-      [...(verdicts?.map ?? [])].flatMap(([key, v]) => {
-        const i = indexOfKey.get(key);
-        return v.verdict && i !== undefined
-          ? [[i, VERDICT_VALUE[v.verdict]] as const]
-          : [];
-      }),
-    ),
-  );
-  const dims = $derived(bundle?.run.embedding_dims ?? 0);
-  // Only worked out for every tile while the list is sorted by it.
-  const priorities = $derived.by(() => {
-    if (!bundle || !embedding || filters.sort !== 'priority') {
-      return null;
-    }
-    const value = learnedValue(embedding, dims, labels);
-    return priority(
-      bundle.tiles.map((t) => t.rank),
-      bundle.tiles.map((t) => t.score !== null),
-      value,
-    );
-  });
-  const learned = $derived(
-    embedding
-      ? { value: valueAt(embedding, dims, labels, current), from: labels.size }
-      : null,
-  );
-  const alike = $derived(embedding ? similar(embedding, dims, current, 6) : []);
-
   function passesFields(t: TileInfo, f: Filters): boolean {
     if (f.mosaic && t.mosaic !== f.mosaic) {
-      return false;
-    }
-    if (f.match !== 'all' && t.xmatch?.uncatalogued !== (f.match === 'uncatalogued')) {
       return false;
     }
     if (f.scoreMin !== null && (t.score === null || t.score < f.scoreMin)) {
       return false;
     }
-    if (f.scoreMax !== null && (t.score === null || t.score > f.scoreMax)) {
-      return false;
-    }
-    return !(f.qMax !== null && (t.q === undefined || t.q > f.qMax));
+    return !(f.scoreMax !== null && (t.score === null || t.score > f.scoreMax));
   }
 
   function passesReview(
@@ -294,22 +202,10 @@
     return !q || text.includes(q) || (v?.note ?? '').toLowerCase().includes(q);
   }
 
-  function sortKey(
-    sort: SortKey,
-    tiles: TileInfo[],
-    pr: Float32Array | null,
-  ): (i: number) => number {
-    if (pr) {
-      return (i) => -(pr[i] ?? NaN);
-    }
+  function sortKey(sort: SortKey, tiles: TileInfo[]): (i: number) => number {
     switch (sort) {
       case 'score':
         return (i) => tiles[i]?.score ?? -Infinity;
-      case 'delta':
-        return (i) => {
-          const t = tiles[i];
-          return t ? (t.score ?? 0) - (t.score_pass1 ?? t.score ?? 0) : NaN;
-        };
       case 'ra':
         return (i) => tiles[i]?.ra ?? NaN;
       case 'dec':
@@ -342,36 +238,12 @@
       out.push(i);
     });
     if (f.sort !== 'rank' || f.desc) {
-      const key = sortKey(f.sort, tiles, f.sort === 'priority' ? priorities : null);
+      const key = sortKey(f.sort, tiles);
       const rank = (i: number) => tiles[i]?.rank ?? NaN;
       const dir = f.desc ? -1 : 1;
       out.sort((a, b) => (key(a) - key(b)) * dir || rank(a) - rank(b));
     }
     return Int32Array.from(out);
-  });
-
-  // Catalogued sources over the current tile, for the plate markers and the readout.
-  $effect(() => {
-    const i = current;
-    if (!bundle?.run.xmatch) {
-      return;
-    }
-    const hit = sourceCache.get(i);
-    sources = hit ?? [];
-    if (hit) {
-      return;
-    }
-    fetch(`${base}cats/${tileId(i)}.json`)
-      .then((r) => (r.ok ? (r.json() as Promise<TileSource[]>) : []))
-      .then((s) => {
-        sourceCache.set(i, s);
-        if (current === i) {
-          sources = s;
-        }
-      })
-      .catch(() => {
-        // A tile without a catalogue file just has no markers.
-      });
   });
 
   const posOf = $derived.by(() => {
@@ -413,7 +285,7 @@
           const stopped = err instanceof DOMException && err.name === 'AbortError';
           if (current === i && !stopped) {
             const rank = bundle?.tiles[i]?.rank ?? i + 1;
-            tileError = `Couldn't load the tile at rank ${String(rank)}. ${err instanceof Error ? err.message : String(err)}. Step away and back to try again.`;
+            tileError = `Couldn't load the object at rank ${String(rank)}. ${err instanceof Error ? err.message : String(err)}. Step away and back to try again.`;
           }
         },
       );
@@ -437,53 +309,6 @@
         // Safari refuses more than 100 of these in 10 seconds, which holding J reaches.
       }
     }
-  });
-
-  const limits = $derived.by((): Limits => {
-    const n = data?.channels ?? 1;
-    // A PNG was already stretched when it was cut, so it's shown as it is.
-    if (data && !data.planes) {
-      return { lo: new Array<number>(n).fill(0), hi: new Array<number>(n).fill(255) };
-    }
-    if (
-      display.limitMode === 'manual' &&
-      Array.isArray(display.lo) &&
-      display.lo.length >= n
-    ) {
-      return { lo: display.lo.slice(0, n), hi: display.hi.slice(0, n) };
-    }
-    if (!data) {
-      return { lo: [0], hi: [1] };
-    }
-    return computeLimits(
-      data,
-      display.limitMode === 'manual' ? 'p995' : display.limitMode,
-    );
-  });
-
-  const mapRange = $derived.by((): [number, number] => {
-    if (!data) {
-      return [0, 1];
-    }
-    const run = bundle?.run.map_range;
-    if (display.source !== 'diff' && run) {
-      return run;
-    }
-    const { map1, map2 } = data;
-    if (display.source === 'diff') {
-      let m = 0;
-      map2?.forEach((v, k) => {
-        m = Math.max(m, Math.abs(v - (map1?.[k] ?? NaN)));
-      });
-      return [-m || -1, m || 1];
-    }
-    let lo = Infinity;
-    let hi = -Infinity;
-    for (const v of (display.source === 'pass1' ? map1 : map2) ?? []) {
-      lo = Math.min(lo, v);
-      hi = Math.max(hi, v);
-    }
-    return lo > hi ? [0, 1] : [lo, hi > lo ? hi : lo + 1];
   });
 
   const frame = $derived.by(() => {
@@ -545,18 +370,6 @@
   }
 
   function setTheme(t: Theme) {
-    if (t === theme) {
-      return;
-    }
-    // The plate world reads tiles as a negative, the way plates were inspected on a light table.
-    if (t === 'plate') {
-      display.invert = true;
-      display.mono = true;
-      display.cmap = 'grey';
-    } else if (theme === 'plate') {
-      display.invert = false;
-      display.mono = false;
-    }
     theme = t;
   }
 
@@ -573,7 +386,7 @@
     } else if (r === null) {
       gotoMsg = 'Type a whole number, like 12.';
     } else {
-      gotoMsg = `No tile has rank ${String(r)}. The lowest is ${String(Math.min(...ranks))} and the highest ${String(Math.max(...ranks))}.`;
+      gotoMsg = `No object has rank ${String(r)}. The lowest is ${String(Math.min(...ranks))} and the highest ${String(Math.max(...ranks))}.`;
     }
   }
 
@@ -613,10 +426,6 @@
       plate?.fit();
     } else if (k === '0') {
       plate?.oneToOne();
-    } else if (k === 'o') {
-      display.overlay = !display.overlay;
-    } else if (k === 'c') {
-      display.catalogues = !display.catalogues;
     } else if (k === '?') {
       if (sheet?.open) {
         sheet.close();
@@ -722,23 +531,23 @@
 
 {#if loadError}
   <main class="fatal">
-    <h1>Couldn't Open the Run</h1>
+    <h1>Couldn't Open the List</h1>
     <p>{loadError}</p>
     <p class="dim">
-      The viewer reads <code>{base}index.json</code>. Point it at another run folder
+      The viewer reads <code>{base}index.json</code>. Point it at another exported list
       with <code>?run=path/to/run/</code> in the address.
     </p>
   </main>
 {:else if !bundle || !verdicts || !tile}
   <main class="fatal">
-    <p class="label">Opening Run</p>
+    <p class="label">Opening List</p>
   </main>
 {:else}
   <div class="app" class:narrow data-tab={tab}>
     <h1 class="sr">jwst-peculiar, {bundle.run.name}</h1>
     {#if !bundle.writable}
       <div class="demo">
-        <span class="label">Demo Run</span>
+        <span class="label">Demo List</span>
         <span class="name">{bundle.run.name}</span>
         <span class="dim"
           >Verdicts stay in this browser. Export them from the Verdict block.</span
@@ -798,16 +607,7 @@
           {data}
           error={tileError}
           {frame}
-          grid={bundle.run.grid}
-          hasPass1={bundle.run.passes >= 2}
-          bind:display
-          {limits}
-          {mapRange}
           {theme}
-          {cursor}
-          sources={bundle.run.xmatch && display.catalogues ? sources : []}
-          hasCatalogues={Boolean(bundle.run.xmatch)}
-          onrenderer={(r: Renderer | null) => (renderer = r)}
           oncursor={(c: { ix: number; iy: number } | null) => (cursor = c)}
         />
       </main>
@@ -819,14 +619,9 @@
           {data}
           {frame}
           {cursor}
-          bind:display
-          {limits}
           {verdicts}
           {order}
           {theme}
-          {sources}
-          {learned}
-          {alike}
           bind:advance
           bind:noteEl
           onselect={select}
@@ -862,7 +657,6 @@
           <span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> Verdict</span>
           <span><kbd>s</kbd> Star</span>
           <span><kbd>n</kbd> Note</span>
-          <span><kbd>o</kbd> Overlay</span>
           <span><kbd>g</kbd> Rank</span>
           <button class="keys" onclick={() => sheet?.showModal()}
             ><kbd>?</kbd> All Keys</button
@@ -993,23 +787,19 @@
         <dt><kbd>/</kbd></dt>
         <dd>Filter the index</dd>
         <dt><kbd>f</kbd></dt>
-        <dd>Fit the tile</dd>
+        <dd>Fit the stamp</dd>
         <dt><kbd>0</kbd></dt>
         <dd>One image pixel per screen pixel</dd>
         <dt><kbd>+</kbd> <kbd>-</kbd></dt>
         <dd>Zoom in or out</dd>
         <dt><kbd>Shift</kbd> <kbd>Arrows</kbd></dt>
-        <dd>Pan the tile</dd>
-        <dt><kbd>o</kbd></dt>
-        <dd>Overlay on or off</dd>
-        <dt><kbd>c</kbd></dt>
-        <dd>Catalogue markers on or off</dd>
+        <dd>Pan the stamp</dd>
         <dt><kbd>?</kbd></dt>
         <dd>This sheet</dd>
       </dl>
       <p class="dim">
-        A verdict moves to the next tile unless you turn that off in the Verdict block.
-        Drag the plate to pan, scroll or pinch to zoom and double-click to fit.
+        A verdict moves to the next object unless you turn that off in the Verdict
+        block. Drag the plate to pan, scroll or pinch to zoom and double-click to fit.
       </p>
     </dialog>
   </div>

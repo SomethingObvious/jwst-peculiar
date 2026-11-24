@@ -202,7 +202,8 @@
   const compass = $derived(frame?.compass() ?? null);
   const bar = $derived(frame ? scaleBar(frame.arcsecPerPx / zoom) : null);
   const ring = $derived.by(() => {
-    if (!data) {
+    // An objects list has one patch per tile, so the ring would circle the whole stamp.
+    if (!data || !patches) {
       return null;
     }
     const [rows, cols] = grid;

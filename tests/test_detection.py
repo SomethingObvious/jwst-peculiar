@@ -39,13 +39,17 @@ ANOMALOUS = "A5_cx000264_cy000264_ra150.999999_decm2.197645_i00000099.png"
 
 
 def _stub_backbone(seed: int = 0) -> Backbone:
-    # Each patch's mean colour, projected. Deterministic and content-sensitive, which
-    # is all the detector needs from a backbone.
-    projection = torch.randn(3, DIM, generator=torch.Generator().manual_seed(seed))
+    # Each patch's colours on a 4 by 4 grid, projected. Deterministic and
+    # content-sensitive, which is all the detector needs from a backbone. Mean colour
+    # alone spans only three directions, so dropping two left the bright bar to
+    # whichever way each platform's SVD broke a near tie.
+    projection = torch.randn(48, DIM, generator=torch.Generator().manual_seed(seed))
 
     def forward_patches(x: torch.Tensor) -> torch.Tensor:
-        pooled = torch.nn.functional.avg_pool2d(x, PATCH)  # (B, 3, GRID, GRID)
-        return pooled.flatten(2).transpose(1, 2) @ projection
+        grid = x.shape[-1] // PATCH
+        sub = torch.nn.functional.avg_pool2d(x, PATCH // 4)  # (B, 3, 4 grid, 4 grid)
+        sub = sub.reshape(len(x), 3, grid, 4, grid, 4).permute(0, 2, 4, 1, 3, 5)
+        return sub.reshape(len(x), grid * grid, 48) @ projection
 
     return Backbone(
         name="stub",

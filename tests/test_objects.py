@@ -506,3 +506,45 @@ def test_init_ignores_weight_and_error_maps(tmp_path: Path) -> None:
         for b in BANDS:
             (folder / f"jw01727-o001_t001_{b}_{kind}.fits").touch()
     assert guess(folder)["pattern"] == "m/{field}_{band}_sci.fits"
+
+
+def mosaic(path: Path, nx: int, ny: int) -> None:
+    w = band(np.zeros((ny, nx), np.float32)).wcs
+    hdu = fits.ImageHDU(np.ones((ny, nx), np.float32), w.to_header())
+    fits.HDUList([fits.PrimaryHDU(), hdu]).writeto(path)
+
+
+def tiled(tmp_path: Path, tile: int) -> Config:
+    for b in BANDS:
+        mosaic(tmp_path / f"a_{b}.fits", 1600, 700)
+    return Config(
+        name="t",
+        out=tmp_path / "run",
+        pattern=f"{tmp_path.as_posix()}/{{field}}_{{band}}.fits",
+        device="cpu",
+        tile=tile,
+    )
+
+
+def test_tiles_overlap_so_an_object_on_a_border_is_whole(tmp_path: Path) -> None:
+    cfg = tiled(tmp_path, 512)
+    assert cfg.field_names() == [f"a~{r}-{c}" for r in range(2) for c in range(4)]
+    assert cfg.band_path("a~1-3", "f150w") == tmp_path / "a_f150w.fits"
+    assert cfg.core("a~1-3") == (1536, 1600, 512, 700)
+    # 12" is 400 pixels, and the box starts on the 64-pixel background mesh
+    assert cfg.boxes("a~1-1") == dict.fromkeys(BANDS, (64, 1426, 64, 700))
+
+
+def test_check_says_what_tile_size_would_fit_in_memory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = tiled(tmp_path, 0)
+    monkeypatch.setattr("jwst_peculiar.objects.check._ram", lambda: 1e9)
+    monkeypatch.setattr("jwst_peculiar.objects.check.BYTES_PER_PIXEL", 1e5)
+    said = [p for p in report(cfg) if "tile:" in p]
+    assert said == [
+        (
+            "cut needs about 448 GB for a and this machine has 1 GB,"
+            " so add tile: 1000 to the config to cut it in pieces"
+        )
+    ]

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict
+import math
 import os
 from pathlib import Path
 import re
@@ -20,10 +21,14 @@ import re
 from astropy.io import fits
 import yaml
 
+from jwst_peculiar.objects import BYTES_PER_PIXEL
+
 BAND = re.compile(r"f(\d{3,4})[wmn]2?", re.IGNORECASE)
 COMPACT = ("f115w", "f150w", "f277w", "f444w")
 NOISE = re.compile(r"([-_](nircam|clear))+$", re.IGNORECASE)
 SEPARATORS = "-_."
+# a field needing more than twice this for cut is cut in tiles of about this
+TILE_BYTES = 4e9
 # maps that come beside a mosaic and cover the same fields
 AUXILIARY = re.compile(
     r"[-_.](wht|err|var|exp|ctx|con|rms|weight|mask)[-_.]", re.IGNORECASE
@@ -143,9 +148,29 @@ def guess(folder: Path) -> dict[str, object]:
     }
     if len(fields) == 1:
         out["fields"] = list(fields)
-    if _image_hdu(folder / pattern.format(field=min(fields), band=detect)) == 0:
-        out["hdu"] = 0
-    return out
+    paths = {b: folder / pattern.format(field=min(fields), band=b) for b in keep}
+    return out | _reading(paths, detect)
+
+
+def _reading(paths: dict[str, Path], detect: str) -> dict[str, int]:
+    # the HDU the image is in and the tile size, where they aren't the defaults
+    hdu = _image_hdu(paths[detect])
+    tile = _tile(list(paths.values()), paths[detect], hdu)
+    return ({"hdu": 0} if hdu == 0 else {}) | ({"tile": tile} if tile else {})
+
+
+def _tile(paths: list[Path], det: Path, hdu: int) -> int:
+    # a tile side in detection pixels that keeps cut near TILE_BYTES, or 0 for none
+    try:
+        shapes = [fits.getheader(p, hdu) for p in paths]
+        h = fits.getheader(det, hdu)
+    except (OSError, KeyError, IndexError):
+        return 0
+    need = BYTES_PER_PIXEL * sum(int(x["NAXIS1"]) * int(x["NAXIS2"]) for x in shapes)
+    if need <= 2 * TILE_BYTES:
+        return 0
+    side = max(int(h["NAXIS1"]), int(h["NAXIS2"])) * math.sqrt(TILE_BYTES / need)
+    return max(2000, int(side) // 1000 * 1000)
 
 
 def main(argv: list[str] | None = None) -> int:

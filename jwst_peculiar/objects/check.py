@@ -9,6 +9,8 @@ written.
 from __future__ import annotations
 
 import argparse
+import math
+import os
 import shutil
 from typing import TYPE_CHECKING, cast
 import warnings
@@ -16,25 +18,57 @@ import warnings
 from astropy.io import fits
 
 from jwst_peculiar.data import resolve_device
+from jwst_peculiar.objects import BYTES_PER_PIXEL
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from jwst_peculiar.objects import Config
 
-# cut committed 3.7 GB at its peak on SMACS 0723, whose four bands add up to 121 Mpx
-BYTES_PER_PIXEL = 3.7e9 / 121e6
-# and its run folder took 307 MB, the most per pixel of any field measured
+# SMACS 0723's run folder took 307 MB for 121 Mpx, the most per pixel measured
 DISK_PER_PIXEL = 307e6 / 121e6
 WEIGHTS = "mwalmsley/zoobot-encoder-convnext_nano"
 
 
 def _pixels(cfg: Config, name: str) -> int:
+    boxes = cfg.boxes(name)
+    if boxes is not None:
+        return sum((x1 - x0) * (y1 - y0) for x0, x1, y0, y1 in boxes.values())
     total = 0
     for b in cfg.bands:
         header = fits.getheader(cfg.band_path(name, b), cfg.hdu)
         total += int(header["NAXIS1"]) * int(header["NAXIS2"])
     return total
+
+
+def _ram() -> float:
+    """Return the machine's memory in bytes, or 0 when it can't be read."""
+    if os.name == "nt":
+        import ctypes  # noqa: PLC0415 Windows only
+
+        # MEMORYSTATUSEX is 64 bytes: its own length, then the total memory at 8
+        status = (ctypes.c_ulonglong * 8)(64)
+        kernel = getattr(ctypes, "windll").kernel32  # noqa: B009 windll is Windows only
+        return float(status[1]) if kernel.GlobalMemoryStatusEx(status) else 0.0
+    try:
+        conf = getattr(os, "sysconf")  # noqa: B009 sysconf isn't on Windows
+        return float(conf("SC_PAGE_SIZE") * conf("SC_PHYS_PAGES"))
+    except (ValueError, OSError, AttributeError):
+        return 0.0
+
+
+def _fits_memory(cfg: Config, biggest: str, need: float) -> list[str]:
+    ram = _ram()
+    if not ram or need <= ram:
+        return []
+    h = fits.getheader(cfg.band_path(biggest, cfg.detect), cfg.hdu)
+    side = cfg.tile or max(int(h["NAXIS1"]), int(h["NAXIS2"]))
+    tile = max(1000, int(side * math.sqrt(ram / 2 / need)) // 1000 * 1000)
+    said = (
+        f"cut needs about {need / 1e9:.0f} GB for {biggest} and this machine has"
+        f" {ram / 1e9:.0f} GB, so add tile: {tile} to the config to cut it in pieces"
+    )
+    return [said]
 
 
 def _units(cfg: Config, name: str) -> None:
@@ -86,14 +120,17 @@ def _memory(cfg: Config, names: list[str], gone: set[str]) -> list[str]:
     px = sizes[biggest]
     said = f"biggest field {biggest}, {px / 1e6:.0f} Mpx"
     print(f"{said}, cut needs about {px * BYTES_PER_PIXEL / 1e9:.1f} GB")  # noqa: T201 the command's report
+    problems = _fits_memory(cfg, biggest, px * BYTES_PER_PIXEL)
     _units(cfg, biggest)
     need = sum(sizes.values()) * DISK_PER_PIXEL / 1e9
     cfg.out.mkdir(parents=True, exist_ok=True)
     free = shutil.disk_usage(cfg.out).free / 1e9
     print(f"the run needs up to about {need:.1f} GB of disk, {free:.0f} GB is free")  # noqa: T201
     if need > free:
-        return [f"the run folder's disk has {free:.1f} GB free, short of {need:.1f} GB"]
-    return []
+        problems.append(
+            f"the run folder's disk has {free:.1f} GB free, not {need:.1f} GB"
+        )
+    return problems
 
 
 def report(cfg: Config) -> list[str]:
@@ -111,7 +148,7 @@ def report(cfg: Config) -> list[str]:
     gone = {p.as_posix() for p in missing}
     problems += [
         f"{p} is cut short or empty, so its download probably stopped early"
-        for n in names
+        for n in cfg.mosaics()
         for p in (cfg.band_path(n, b) for b in cfg.bands)
         if p.as_posix() not in gone and _short(p, cfg.hdu)
     ]

@@ -34,7 +34,7 @@ import requests
 from scipy.ndimage import map_coordinates, maximum_filter
 
 from jwst_peculiar.catalogues import PatientSession
-from jwst_peculiar.objects import compact, written
+from jwst_peculiar.objects import MESH, compact, written
 from jwst_peculiar.objects.flags import blobs, flags, grid, stamp_pixels
 from jwst_peculiar.prep import asinh_to_uint8, wcs_record
 
@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 
     import numpy.typing as npt
 
-    from jwst_peculiar.objects import Config
+    from jwst_peculiar.objects import Box, Config
     from jwst_peculiar.utils import FitsHDUList, SkyWcs
 
     Floats = npt.NDArray[np.float64]
@@ -76,8 +76,26 @@ class Band:
         return np.asarray(x, float), np.asarray(y, float)
 
 
-def read_band(path: Path, hdu: int | str) -> Band:
-    """Read a mosaic and subtract the same background detection uses.
+def _read(path: Path, hdu: int | str, box: Box | None) -> tuple[Any, Any]:
+    try:
+        hdul: FitsHDUList = fits.open(path, memmap=True)
+        with hdul as h:
+            header = h[hdu].header.copy()
+            if box is None:
+                return np.asarray(h[hdu].data, np.float32), header
+            x0, x1, y0, y1 = box
+            raw = np.asarray(h[hdu].section[y0:y1, x0:x1], np.float32)
+    except (TypeError, ValueError, OSError, EOFError) as err:
+        msg = f"Couldn't read {path} ({err}). A short file is a stopped download."
+        raise SystemExit(msg) from err
+    # moving the reference pixel puts the WCS, distortion included, on the box
+    header["CRPIX1"] -= x0
+    header["CRPIX2"] -= y0
+    return raw, header
+
+
+def read_band(path: Path, hdu: int | str, box: Box | None = None) -> Band:
+    """Read a mosaic, or the box x0, x1, y0, y1 of one, less its background.
 
     Returns:
         The band.
@@ -85,18 +103,13 @@ def read_band(path: Path, hdu: int | str) -> Band:
     Raises:
         SystemExit: When the mosaic can't be read, usually as it's cut short.
     """
-    try:
-        hdul: FitsHDUList = fits.open(path, memmap=True)
-        with hdul as h:
-            raw = np.asarray(h[hdu].data, np.float32)
-            header = h[hdu].header
-    except (TypeError, ValueError, OSError, EOFError) as err:
-        msg = f"Couldn't read {path} ({err}). A short file is a stopped download."
-        raise SystemExit(msg) from err
+    raw, header = _read(path, hdu, box)
     wcs = WCS(header).celestial
     off = ~np.isfinite(raw) | (raw == 0)
     z = np.where(off, 0, raw).astype(np.float32)
-    bkg = Background2D(z, 64, filter_size=3, bkg_estimator=MedianBackground(), mask=off)
+    bkg = Background2D(
+        z, MESH, filter_size=3, bkg_estimator=MedianBackground(), mask=off
+    )
     data = np.where(off, np.nan, z - bkg.background).astype(np.float32)
     scale = float(np.sqrt(abs(np.linalg.det(wcs.pixel_scale_matrix))) * 3600)
     roll = float(header["PA_V3"]) if "PA_V3" in header else None
@@ -365,21 +378,45 @@ class Measured:
     segmap: npt.NDArray[np.int32]
     bands: dict[str, Band]
     noise: list[str]
+    strong: npt.NDArray[np.bool_]
+    core: Box | None = None
+    origin: tuple[int, int] = (0, 0)
+
+
+def _own(
+    t: pd.DataFrame, det: Band, *, core: Box | None, origin: tuple[int, int]
+) -> Any:  # noqa: ANN401 a boolean Series
+    # a tile keeps only what's centred in its own square, so neighbours never share one
+    if core is None:
+        return np.ones(len(t), bool)
+    x, y = det.pixels(t.ra.to_numpy(float), t.dec.to_numpy(float))
+    x, y = x + origin[0], y + origin[1]
+    return (core[0] <= x) & (x < core[1]) & (core[2] <= y) & (y < core[3])
 
 
 def measure(cfg: Config, name: str) -> Measured:
-    """Detect every segment in a field and measure it in every band.
+    """Detect every segment in a field or tile and measure it in every band.
 
     Returns:
         The segments, their map, the bands, and each band's noise factors for the log.
     """
-    bands = {b: read_band(cfg.band_path(name, b), cfg.hdu) for b in cfg.bands}
+    boxes = cfg.boxes(name) or {}
+    bands = {
+        b: read_band(cfg.band_path(name, b), cfg.hdu, boxes.get(b)) for b in cfg.bands
+    }
     seg, segmap = detect(bands[cfg.detect])
+    # by label, before a tile drops what isn't its own, as a neighbour may own one
+    strong = np.zeros(int(np.max(segmap)) + 1, dtype=np.bool_)
+    strong[seg.label.to_numpy(int)[seg.sn.to_numpy(float) >= compact.MIN_SN]] = True
+    core = cfg.core(name)
+    origin = (boxes[cfg.detect][0], boxes[cfg.detect][2]) if boxes else (0, 0)
+    own = _own(seg, bands[cfg.detect], core=core, origin=origin)
+    seg = seg.loc[own].reset_index(drop=True)
     blank = np.column_stack(blank_sky(segmap, bands[cfg.detect]))
     seg["cover"] = True
     seg["field"] = name
     noise = [photometry(seg, bands[b], name=b, blank=blank) for b in cfg.bands]
-    return Measured(seg, segmap, bands, noise)
+    return Measured(seg, segmap, bands, noise, strong, core, origin)
 
 
 def red_only(cfg: Config, name: str, m: Measured) -> pd.DataFrame:
@@ -393,13 +430,14 @@ def red_only(cfg: Config, name: str, m: Measured) -> pd.DataFrame:
     """
     red = m.bands[compact.RED]
     t, redmap = detect(red)
-    strong = np.zeros(int(np.max(m.segmap)) + 1, dtype=np.bool_)
-    strong[m.seg.label.to_numpy(int)[m.seg.sn.to_numpy(float) >= compact.MIN_SN]] = True
     x, y = m.bands[cfg.detect].pixels(t.ra.to_numpy(float), t.dec.to_numpy(float))
     ny, nx = m.segmap.shape
     ix = np.clip(np.rint(x).astype(int), 0, nx - 1)
     iy = np.clip(np.rint(y).astype(int), 0, ny - 1)
-    t = pd.DataFrame(t.loc[~strong[m.segmap[iy, ix]]].reset_index(drop=True))
+    keep = ~m.strong[m.segmap[iy, ix]] & _own(
+        t, m.bands[cfg.detect], core=m.core, origin=m.origin
+    )
+    t = pd.DataFrame(t.loc[keep].reset_index(drop=True))
     t["label"] += compact.OFFSET
     t["parent"] += compact.OFFSET
     t["cover"] = True

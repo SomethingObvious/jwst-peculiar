@@ -7,6 +7,10 @@ trains the classifier `rank` weights rarity by on the verdicts given there.
 `compact` ranks the small sources `cut` leaves without a stamp on their colours,
 `init` writes a config for a folder of mosaics, and `check` says what a config finds
 before any of that runs.
+
+With `tile` set, each mosaic is cut in squares that many detection-band pixels on a
+side, named `FIELD~ROW-COL`. Each is read with a margin of `OVERLAP` arcsec so an
+object near its edge is whole, and keeps only the objects centred in its own square.
 """
 
 from __future__ import annotations
@@ -16,9 +20,13 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import difflib
 import glob
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from astropy.io import fits
+from astropy.wcs import WCS
+import numpy as np
 import yaml
 
 if TYPE_CHECKING:
@@ -36,6 +44,41 @@ STEPS = (
     "view",
     "compact",
 )
+TILE_MARK = "~"
+OVERLAP = 12.0
+# the box size cut measures the sky background in
+MESH = 64
+# cut committed 3.7 GB at its peak on SMACS 0723, whose four bands add up to 121 Mpx
+BYTES_PER_PIXEL = 3.7e9 / 121e6
+Box = tuple[int, int, int, int]
+
+
+def split_tile(name: str) -> tuple[str, tuple[int, int] | None]:
+    """Split a field name into its mosaic and, for a tile, its row and column.
+
+    Returns:
+        The mosaic's field name, and the tile's row and column or None.
+    """
+    field, mark, where = name.partition(TILE_MARK)
+    if not mark:
+        return field, None
+    row, col = where.split("-")
+    return field, (int(row), int(col))
+
+
+def _box(header: Any, ra: Any, dec: Any) -> Box:  # noqa: ANN401 astropy has no types
+    # the pixels of one band that cover the sky corners given, clipped to its image
+    x, y = WCS(header).celestial.all_world2pix(ra, dec, 0)
+    nx, ny = int(header["NAXIS1"]), int(header["NAXIS2"])
+    # starting on a multiple of the background mesh keeps a tile's sky the field's
+    x0 = max(0, math.floor(float(x.min())) // MESH * MESH)
+    y0 = max(0, math.floor(float(y.min())) // MESH * MESH)
+    return (
+        x0,
+        min(nx, math.ceil(float(x.max())) + 1),
+        y0,
+        min(ny, math.ceil(float(y.max())) + 1),
+    )
 
 
 @dataclass(frozen=True)
@@ -53,10 +96,40 @@ class Config:
     stars: Path | None = None
     gaia: bool | Path = True
     device: str = "auto"
+    tile: int = 0
 
     def band_path(self, name: str, band: str) -> Path:
-        """Return the mosaic of one band of one field."""
-        return Path(self.pattern.format(field=name, band=band))
+        """Return the mosaic of one band of one field, or of the field a tile is in."""
+        return Path(self.pattern.format(field=split_tile(name)[0], band=band))
+
+    def _header(self, name: str, band: str) -> Any:  # noqa: ANN401 astropy has no types
+        return fits.getheader(self.band_path(name, band), self.hdu)
+
+    def core(self, name: str) -> Box | None:
+        """Return a tile's own square, x0, x1, y0, y1 in detection-band pixels."""
+        _, where = split_tile(name)
+        if where is None:
+            return None
+        row, col = where
+        h = self._header(name, self.detect)
+        nx, ny = int(h["NAXIS1"]), int(h["NAXIS2"])
+        t = self.tile
+        return col * t, min((col + 1) * t, nx), row * t, min((row + 1) * t, ny)
+
+    def boxes(self, name: str) -> dict[str, Box] | None:
+        """Return the part of each band to read for a tile, its square plus a margin."""
+        core = self.core(name)
+        if core is None:
+            return None
+        det = WCS(self._header(name, self.detect)).celestial
+        pad = OVERLAP / float(
+            np.sqrt(abs(np.linalg.det(det.pixel_scale_matrix))) * 3600
+        )
+        x0, x1, y0, y1 = core
+        xs = np.array([x0 - pad, x1 + pad, x1 + pad, x0 - pad])
+        ys = np.array([y0 - pad, y0 - pad, y1 + pad, y1 + pad])
+        ra, dec = det.all_pix2world(xs, ys, 0)
+        return {b: _box(self._header(name, b), ra, dec) for b in self.bands}
 
     def cut_fields(self) -> list[str]:
         """Return the fields to read, the configured ones or every one cut.
@@ -78,13 +151,35 @@ class Config:
         """Return the mosaics the fields to search should have and don't."""
         return [
             p
-            for name in self.field_names()
+            for name in self.mosaics()
             for p in (self.band_path(name, b) for b in self.bands)
             if not p.is_file()
         ]
 
     def field_names(self) -> list[str]:
-        """Return the fields to search, the configured ones or every one on disk.
+        """Return the fields to search, each mosaic or, with `tile`, each tile of one.
+
+        Returns:
+            The names.
+        """
+        names = self.mosaics()
+        if not self.tile:
+            return names
+        out = []
+        for name in names:
+            if split_tile(name)[1] is not None:
+                out.append(name)
+                continue
+            h = self._header(name, self.detect)
+            rows = math.ceil(int(h["NAXIS2"]) / self.tile)
+            cols = math.ceil(int(h["NAXIS1"]) / self.tile)
+            out += [
+                f"{name}{TILE_MARK}{r}-{c}" for r in range(rows) for c in range(cols)
+            ]
+        return out
+
+    def mosaics(self) -> list[str]:
+        """Return the mosaics to search, the configured ones or every one on disk.
 
         Raises:
             SystemExit: When the pattern finds no detection-band mosaic.

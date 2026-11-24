@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import math
-import os
 import shutil
 from typing import TYPE_CHECKING, cast
 import warnings
@@ -18,7 +17,7 @@ import warnings
 from astropy.io import fits
 
 from jwst_peculiar.data import resolve_device
-from jwst_peculiar.objects import BYTES_PER_PIXEL
+from jwst_peculiar.objects import BYTES_PER_PIXEL, memory_size
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -30,35 +29,8 @@ DISK_PER_PIXEL = 307e6 / 121e6
 WEIGHTS = "mwalmsley/zoobot-encoder-convnext_nano"
 
 
-def _pixels(cfg: Config, name: str) -> int:
-    boxes = cfg.boxes(name)
-    if boxes is not None:
-        return sum((x1 - x0) * (y1 - y0) for x0, x1, y0, y1 in boxes.values())
-    total = 0
-    for b in cfg.bands:
-        header = fits.getheader(cfg.band_path(name, b), cfg.hdu)
-        total += int(header["NAXIS1"]) * int(header["NAXIS2"])
-    return total
-
-
-def _ram() -> float:
-    """Return the machine's memory in bytes, or 0 when it can't be read."""
-    if os.name == "nt":
-        import ctypes  # noqa: PLC0415 Windows only
-
-        # MEMORYSTATUSEX is 64 bytes: its own length, then the total memory at 8
-        status = (ctypes.c_ulonglong * 8)(64)
-        kernel = getattr(ctypes, "windll").kernel32  # noqa: B009 windll is Windows only
-        return float(status[1]) if kernel.GlobalMemoryStatusEx(status) else 0.0
-    try:
-        conf = getattr(os, "sysconf")  # noqa: B009 sysconf isn't on Windows
-        return float(conf("SC_PAGE_SIZE") * conf("SC_PHYS_PAGES"))
-    except (ValueError, OSError, AttributeError):
-        return 0.0
-
-
 def _fits_memory(cfg: Config, biggest: str, need: float) -> list[str]:
-    ram = _ram()
+    ram = memory_size()
     if not ram or need <= ram:
         return []
     h = fits.getheader(cfg.band_path(biggest, cfg.detect), cfg.hdu)
@@ -113,7 +85,7 @@ def _memory(cfg: Config, names: list[str], gone: set[str]) -> list[str]:
     if not have:
         return []
     try:
-        sizes = {n: _pixels(cfg, n) for n in have}
+        sizes = {n: cfg.pixels(n) for n in have}
     except (OSError, KeyError) as err:
         return [f"couldn't read the mosaics' size ({err})"]
     biggest = max(sizes, key=sizes.__getitem__)
@@ -125,7 +97,7 @@ def _memory(cfg: Config, names: list[str], gone: set[str]) -> list[str]:
     need = sum(sizes.values()) * DISK_PER_PIXEL / 1e9
     cfg.out.mkdir(parents=True, exist_ok=True)
     free = shutil.disk_usage(cfg.out).free / 1e9
-    print(f"the run needs up to about {need:.1f} GB of disk, {free:.0f} GB is free")  # noqa: T201
+    print(f"the run needs up to about {need:.1f} GB of disk, {free:.0f} GB is free")  # noqa: T201 the command's report
     if need > free:
         problems.append(
             f"the run folder's disk has {free:.1f} GB free, not {need:.1f} GB"
@@ -154,13 +126,13 @@ def report(cfg: Config) -> list[str]:
     ]
     problems += _memory(cfg, names, gone)
     try:
-        print(f"embed would run on {resolve_device(cfg.device)}")  # noqa: T201
+        print(f"embed would run on {resolve_device(cfg.device)}")  # noqa: T201 the command's report
     except RuntimeError as err:
         problems.append(str(err))
     state = (
         "downloaded" if _weights_cached() else "not downloaded yet, embed fetches them"
     )
-    print(f"Zoobot weights {state}")  # noqa: T201
+    print(f"Zoobot weights {state}")  # noqa: T201 the command's report
     try:
         cfg.out.mkdir(parents=True, exist_ok=True)
         probe = cfg.out / ".check"
@@ -180,6 +152,6 @@ def main(cfg: Config, argv: list[str]) -> int:
     argparse.ArgumentParser(prog="jwst-peculiar objects check CONFIG").parse_args(argv)
     problems = report(cfg)
     for p in problems:
-        print(f"problem: {p}")  # noqa: T201
-    print("ready" if not problems else f"{len(problems)} problems")  # noqa: T201
+        print(f"problem: {p}")  # noqa: T201 the command's report
+    print("ready" if not problems else f"{len(problems)} problems")  # noqa: T201 the command's report
     return 1 if problems else 0

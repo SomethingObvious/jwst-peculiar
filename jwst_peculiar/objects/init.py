@@ -86,7 +86,7 @@ def _after_band(seen: Seen) -> Seen:
         return seen
     pre = os.path.commonprefix(list(names))  # noqa: RUF071 names, not paths, character by character
     pre = pre[: max(pre.rfind(c) for c in SEPARATORS) + 1]
-    suf = os.path.commonprefix([n[::-1] for n in names])[::-1]  # noqa: RUF071
+    suf = os.path.commonprefix([n[::-1] for n in names])[::-1]  # noqa: RUF071 as above
     cut = [i for i in (suf.find(c) for c in SEPARATORS) if i >= 0]
     suf = suf[min(cut) :] if cut else ""
     if "{band}" not in pre + suf or len(pre) + len(suf) >= min(map(len, names)):

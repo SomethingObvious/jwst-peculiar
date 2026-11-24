@@ -21,6 +21,7 @@ from dataclasses import dataclass
 import difflib
 import glob
 import math
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -51,6 +52,22 @@ MESH = 64
 # cut committed 3.7 GB at its peak on SMACS 0723, whose four bands add up to 121 Mpx
 BYTES_PER_PIXEL = 3.7e9 / 121e6
 Box = tuple[int, int, int, int]
+
+
+def memory_size() -> float:
+    """Return the machine's memory in bytes, or 0 when it can't be read."""
+    if os.name == "nt":
+        import ctypes  # noqa: PLC0415 Windows only
+
+        # MEMORYSTATUSEX is 64 bytes: its own length, then the total memory at 8
+        status = (ctypes.c_ulonglong * 8)(64)
+        kernel = getattr(ctypes, "windll").kernel32  # noqa: B009 windll is Windows only
+        return float(status[1]) if kernel.GlobalMemoryStatusEx(status) else 0.0
+    try:
+        conf = getattr(os, "sysconf")  # noqa: B009 sysconf isn't on Windows
+        return float(conf("SC_PAGE_SIZE") * conf("SC_PHYS_PAGES"))
+    except (ValueError, OSError, AttributeError):
+        return 0.0
 
 
 def split_tile(name: str) -> tuple[str, tuple[int, int] | None]:
@@ -146,6 +163,14 @@ class Config:
             msg = f"{what} hasn't been cut into {root} yet. Run objects cut first."
             raise SystemExit(msg)
         return names
+
+    def pixels(self, name: str) -> int:
+        """Return the pixels cut reads for a field or tile, over all its bands."""
+        boxes = self.boxes(name)
+        if boxes is not None:
+            return sum((x1 - x0) * (y1 - y0) for x0, x1, y0, y1 in boxes.values())
+        shapes = [self._header(name, b) for b in self.bands]
+        return sum(int(h["NAXIS1"]) * int(h["NAXIS2"]) for h in shapes)
 
     def missing(self) -> list[Path]:
         """Return the mosaics the fields to search should have and don't."""
@@ -299,10 +324,10 @@ def run(cfg: Config, rest: list[str]) -> int:
         The first nonzero exit code, or 0.
     """
     from jwst_peculiar.objects import compact  # noqa: PLC0415 these load torch and scikit-learn
-    from jwst_peculiar.objects.check import main as check  # noqa: PLC0415
-    from jwst_peculiar.objects.cut import main as cut  # noqa: PLC0415
-    from jwst_peculiar.objects.embed import main as embed  # noqa: PLC0415
-    from jwst_peculiar.objects.rank import main as rank  # noqa: PLC0415
+    from jwst_peculiar.objects.check import main as check  # noqa: PLC0415 as above
+    from jwst_peculiar.objects.cut import main as cut  # noqa: PLC0415 as above
+    from jwst_peculiar.objects.embed import main as embed  # noqa: PLC0415 as above
+    from jwst_peculiar.objects.rank import main as rank  # noqa: PLC0415 as above
 
     steps = [(check, []), (cut, rest), (embed, []), (rank, ["rank"])]
     if compact.has_bands(cfg):

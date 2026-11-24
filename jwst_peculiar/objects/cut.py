@@ -19,6 +19,7 @@ import argparse
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 import json
+import os
 from typing import TYPE_CHECKING, Any
 
 from astropy.convolution import Gaussian2DKernel, convolve
@@ -33,10 +34,16 @@ from PIL import Image
 import requests
 from scipy.ndimage import map_coordinates, maximum_filter
 
-from jwst_peculiar.catalogues import PatientSession
-from jwst_peculiar.objects import MESH, compact, written
+from jwst_peculiar.objects import (
+    BYTES_PER_PIXEL,
+    MESH,
+    compact,
+    memory_size,
+    written,
+)
 from jwst_peculiar.objects.flags import blobs, flags, grid, stamp_pixels
 from jwst_peculiar.prep import asinh_to_uint8, wcs_record
+from jwst_peculiar.session import PatientSession
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -523,6 +530,21 @@ def cut_field(cfg: Config, name: str, *, redo: bool = False) -> str:
     return f"{said}, {len(small)} compact, {_unflagged(small)} unflagged"
 
 
+def fitting_workers(cfg: Config, names: list[str]) -> int:
+    """Return how many fields to cut at once, a core in four and half the memory.
+
+    4 at once took 4 COSMOS-Web fields from 197 seconds to 68 on 16 threads.
+
+    Returns:
+        1 or more.
+    """
+    if len(names) < 2:  # noqa: PLR2004 one field has nothing to share
+        return 1
+    need = BYTES_PER_PIXEL * max(cfg.pixels(n) for n in names)
+    fit = int(memory_size() / 2 // need)
+    return max(1, min(len(names), (os.cpu_count() or 1) // 4, fit))
+
+
 def main(cfg: Config, argv: list[str]) -> int:
     """Cut every field that hasn't been cut yet.
 
@@ -534,8 +556,9 @@ def main(cfg: Config, argv: list[str]) -> int:
     p.add_argument(
         "--workers",
         type=int,
-        default=1,
-        help="fields to cut at once, each needing the memory objects check gives",
+        default=0,
+        help="fields to cut at once, each needing the memory objects check gives,"
+        " by default as many as fit in half this machine's memory",
     )
     a = p.parse_args(argv)
     want = ["stamps.npy", compact.LIST] if compact.has_bands(cfg) else ["stamps.npy"]
@@ -544,11 +567,13 @@ def main(cfg: Config, argv: list[str]) -> int:
         for name in cfg.field_names()
         if a.redo or not all((cfg.out / "fields" / name / f).exists() for f in want)
     ]
-    if a.workers <= 1:
+    workers = a.workers or fitting_workers(cfg, waiting)
+    if workers <= 1:
         for name in waiting:
             print(cut_field(cfg, name, redo=a.redo), flush=True)  # noqa: T201 the command's progress
         return 0
-    with ProcessPoolExecutor(a.workers) as pool:
+    print(f"cutting {len(waiting)} fields, {workers} at a time", flush=True)  # noqa: T201 the command's progress
+    with ProcessPoolExecutor(workers) as pool:
         jobs = [pool.submit(cut_field, cfg, name, redo=a.redo) for name in waiting]
         for job in as_completed(jobs):
             print(job.result(), flush=True)  # noqa: T201 the command's progress

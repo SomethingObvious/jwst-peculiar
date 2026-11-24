@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from astropy.table import Table
 import pytest
 
-from jwst_peculiar import catalogues
+from jwst_peculiar import catalogues, session
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -44,7 +44,7 @@ def test_a_service_that_goes_quiet_is_given_up_on(
     with socket.create_server(("127.0.0.1", 0)) as stalled:
         url = f"http://127.0.0.1:{stalled.getsockname()[1]}/tap"
         monkeypatch.setitem(catalogues.SERVICES["SIMBAD"], "urls", [url, url])
-        monkeypatch.setattr(catalogues, "TIMEOUT_S", 0.5)
+        monkeypatch.setattr(session, "TIMEOUT_S", 0.5)
         got: dict[str, Any] = {}
 
         def ask() -> None:

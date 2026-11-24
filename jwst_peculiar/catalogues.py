@@ -28,10 +28,9 @@ from astropy.table import Table
 import astropy.units as u
 import numpy as np
 import pyvo
-import requests
-from typing_extensions import override
 
 from jwst_peculiar.bundle import RunBundle, mosaic_wcs
+from jwst_peculiar.session import PatientSession
 
 if TYPE_CHECKING:
     import numpy.typing as npt
@@ -88,19 +87,6 @@ DEC_NAMES = (
     "de",
 )
 ID_NAMES = ("id", "name", "source_id", "number", "objid", "object")
-# Seconds a service may go quiet before the next mirror is tried.
-TIMEOUT_S = 60
-
-
-class PatientSession(requests.Session):
-    """A session that gives up on a stalled server, which pyvo's own never does."""
-
-    @override
-    def request(
-        self, method: str, url: Any, *args: Any, **kwargs: Any
-    ) -> requests.Response:
-        kwargs.setdefault("timeout", TIMEOUT_S)
-        return super().request(method, url, *args, **kwargs)
 
 
 def _note(cat: str, value: TableCell) -> str:

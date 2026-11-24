@@ -48,14 +48,13 @@ device: auto
 
 Without `fields`, every mosaic the pattern matches in the detect band is a field.
 
-`check` reads the config and says what it found before any long step runs: how many fields, any mosaic a field lacks, the memory `cut` needs for the biggest field and the disk the whole run needs, the device `embed` will use and whether the Zoobot weights are downloaded yet. The disk figure is an upper bound, as SMACS 0723 took 2.5 bytes per mosaic pixel and COSMOS-Web 1.5. A misspelled key, a band missing from `bands` or a pattern without `{band}` stops it with the reason. `run` does `check`, `cut`, `embed`, `rank` and, with F115W, F150W, F277W and F444W, `compact` in turn, and stops at the first that fails. Options after the config go to `cut`, like `run survey.yaml --workers 4`.
+`check` reads the config and says what it found before any long step runs: how many fields, any mosaic a field lacks, the memory `cut` needs for the biggest field and the disk the whole run needs, the device `embed` will use and whether the Zoobot weights are downloaded yet. The disk figure is an upper bound, as SMACS 0723 took 2.5 bytes per mosaic pixel and COSMOS-Web 1.5. A misspelled key, a band missing from `bands` or a pattern without `{band}` stops it with the reason. `run` does `check`, `cut`, `embed`, `rank` and, with F115W, F150W, F277W and F444W, `compact` in turn, and stops at the first that fails. Options after the config go to `cut`, like `run survey.yaml --redo`.
 
 ```
 jwst-peculiar objects init mosaics survey.yaml  a config from the mosaics' file names
 jwst-peculiar objects check survey.yaml         what the config finds, before a long run
 jwst-peculiar objects run survey.yaml           check, cut, embed, rank and compact in turn
 jwst-peculiar objects cut survey.yaml           detect, measure, flag and cut stamps
-jwst-peculiar objects cut survey.yaml --workers 4
 jwst-peculiar objects embed survey.yaml         Zoobot embeddings of every stamp
 jwst-peculiar objects rank survey.yaml -n 500   the rarest systems, to rank.csv
 jwst-peculiar objects rank survey.yaml --sample -n 200
@@ -68,7 +67,7 @@ jwst-peculiar objects view survey.yaml --list compact.csv
 jwst-peculiar objects view survey.yaml --export site/ --site_url https://example.org/demo/
 ```
 
-`cut` writes each field's objects to `fields/FIELD/objects.csv` with their aperture photometry in nJy and a `flag_*` column for every artefact test. A flagged object is left out of the ranking, and `flag_outshone`, a brighter neighbour in the stamp, only keeps it off the list. Each field is read into memory whole, about 31 bytes per pixel over all its bands, so SMACS 0723's 121 Mpx peaked at 3.7 GB. `cut --workers 4` cuts four fields at once, each needing that much memory, which took 4 COSMOS-Web fields from 3 minutes 17 seconds to 68 seconds on a 16-thread laptop with the same output.
+`cut` writes each field's objects to `fields/FIELD/objects.csv` with their aperture photometry in nJy and a `flag_*` column for every artefact test. A flagged object is left out of the ranking, and `flag_outshone`, a brighter neighbour in the stamp, only keeps it off the list. Each field is read into memory whole, about 31 bytes per pixel over all its bands, so SMACS 0723's 121 Mpx peaked at 3.7 GB. `cut` cuts several fields at once, one for every four cores and no more than fit in half the machine's memory, which took 4 COSMOS-Web fields from 3 minutes 17 seconds to 68 seconds on a 16-thread laptop with the same output. `--workers 1` cuts one at a time, and any other number sets it.
 
 A mosaic too big for memory, like a whole JADES or UNCOVER field, can be cut in squares with `tile: 4000` in the config, counted in pixels of the detection band. Each square is a field of its own named `FIELD~ROW-COL`, read with a 12 arcsec margin so an object on a border comes out whole, and it keeps only the objects centred in it. `init` sets `tile` itself when a mosaic would need more than about 8 GB, and `check` says when the memory needed is more than the machine has and what tile size would fit. On CEERS in 2000-pixel tiles, 99.6% of objects matched the run on the whole mosaic and 49 of the top 50 were the same, as the sky background and the noise are measured per tile.
 
@@ -88,7 +87,7 @@ Run `objects check` first, as it catches most of these before a long step does.
 - `cut short or empty, so its download probably stopped early` means a mosaic is smaller than its own header says. Download it again, as `curl -o` leaves whatever arrived before a dropped connection.
 - On a remote machine, run `view` with `--no-browser` and forward its port, with `ssh -L 8765:127.0.0.1:8765 host`, then open http://127.0.0.1:8765/ on your own. The viewer only listens on the machine it runs on.
 - `Port 8765 is taken` only means another viewer is open, and this one uses a free port instead.
-- `cut` needs memory for a whole field at once, about 31 bytes per pixel over all its bands. If a field doesn't fit, set `tile` to the size `check` suggests, and with `--workers` each worker needs that much.
+- `cut` needs memory for a whole field at once, about 31 bytes per pixel over all its bands. If a field doesn't fit, set `tile` to the size `check` suggests. Each field cut at the same time needs that much again, so if something else needs the memory, `--workers 1` cuts one field at a time.
 
 ## The Patch Search
 

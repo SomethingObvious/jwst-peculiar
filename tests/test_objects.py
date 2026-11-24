@@ -26,7 +26,15 @@ from jwst_peculiar.objects.compact import (
     one_pair,
     sharp,
 )
-from jwst_peculiar.objects.cut import Band, N, detect, gaia_stars, photometry, render
+from jwst_peculiar.objects.cut import (
+    Band,
+    N,
+    detect,
+    fitting_workers,
+    gaia_stars,
+    photometry,
+    render,
+)
 from jwst_peculiar.objects.flags import blobs, merged, on_spikes
 from jwst_peculiar.objects.init import guess, split_name
 from jwst_peculiar.objects.rank import (
@@ -540,7 +548,7 @@ def test_check_says_what_tile_size_would_fit_in_memory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cfg = tiled(tmp_path, 0)
-    monkeypatch.setattr("jwst_peculiar.objects.check._ram", lambda: 1e9)
+    monkeypatch.setattr("jwst_peculiar.objects.check.memory_size", lambda: 1e9)
     monkeypatch.setattr("jwst_peculiar.objects.check.BYTES_PER_PIXEL", 1e5)
     said = [p for p in report(cfg) if "tile:" in p]
     assert said == [
@@ -577,3 +585,17 @@ def test_trails_are_flagged_but_spiky_stars_and_galaxies_are_not() -> None:
         "wide band of light": False,
         "sky": False,
     }
+
+
+def test_cut_runs_as_many_fields_at_once_as_cores_and_memory_allow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = tiled(tmp_path, 512)
+    names = cfg.field_names()
+    # the biggest tile reads 3.5 Mpx in all, about 106 MB at 31 bytes a pixel
+    monkeypatch.setattr("os.cpu_count", lambda: 16)
+    monkeypatch.setattr("jwst_peculiar.objects.cut.memory_size", lambda: 1e12)
+    assert fitting_workers(cfg, names) == 4
+    monkeypatch.setattr("jwst_peculiar.objects.cut.memory_size", lambda: 0.13e9)
+    assert fitting_workers(cfg, names) == 1
+    assert fitting_workers(cfg, names[:1]) == 1

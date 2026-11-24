@@ -10,13 +10,16 @@ from __future__ import annotations
 
 import argparse
 import shutil
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
+import warnings
 
 from astropy.io import fits
 
 from jwst_peculiar.data import resolve_device
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from jwst_peculiar.objects import Config
 
 # cut committed 3.7 GB at its peak on SMACS 0723, whose four bands add up to 121 Mpx
@@ -45,6 +48,19 @@ def _units(cfg: Config, name: str) -> None:
             f"the mosaics' units are {', '.join(sorted(units))} rather than MJy/sr,"
             " so the f_ and e_ columns won't be in nJy, though the ranking is the same"
         )
+
+
+def _short(path: Path, hdu: int | str) -> bool:
+    # a download that stopped early leaves a file shorter than its header says, or
+    # no header at all, and astropy's own warning would only repeat this
+    try:
+        with warnings.catch_warnings(), fits.open(path, memmap=True) as h:
+            warnings.simplefilter("ignore")
+            info = cast("dict[str, int] | None", h.fileinfo(h.index_of(hdu)))
+    except (OSError, KeyError, IndexError):
+        return True
+    end = 0 if info is None else info["datLoc"] + info["datSpan"]
+    return path.stat().st_size < end
 
 
 def _weights_cached() -> bool:
@@ -91,7 +107,14 @@ def report(cfg: Config) -> list[str]:
     problems = [f"missing {p}" for p in missing[:10]]
     if len(missing) > 10:  # noqa: PLR2004 enough to see the pattern
         problems.append(f"and {len(missing) - 10} more missing mosaics")
-    problems += _memory(cfg, names, {p.as_posix() for p in missing})
+    gone = {p.as_posix() for p in missing}
+    problems += [
+        f"{p} is cut short or empty, so its download probably stopped early"
+        for n in names
+        for p in (cfg.band_path(n, b) for b in cfg.bands)
+        if p.as_posix() not in gone and _short(p, cfg.hdu)
+    ]
+    problems += _memory(cfg, names, gone)
     try:
         print(f"embed would run on {resolve_device(cfg.device)}")  # noqa: T201
     except RuntimeError as err:

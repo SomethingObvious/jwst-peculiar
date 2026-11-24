@@ -81,10 +81,17 @@ def read_band(path: Path, hdu: int | str) -> Band:
 
     Returns:
         The band.
+
+    Raises:
+        SystemExit: When the mosaic can't be read, usually as it's cut short.
     """
     hdul: FitsHDUList = fits.open(path, memmap=True)
     with hdul as h:
-        raw = np.asarray(h[hdu].data, np.float32)
+        try:
+            raw = np.asarray(h[hdu].data, np.float32)
+        except (TypeError, ValueError, OSError) as err:
+            msg = f"Couldn't read {path} ({err}). A short file is a stopped download."
+            raise SystemExit(msg) from err
         header = h[hdu].header
     wcs = WCS(header).celestial
     off = ~np.isfinite(raw) | (raw == 0)

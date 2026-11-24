@@ -437,3 +437,21 @@ def test_a_failed_check_stops_run_before_anything_is_cut(tmp_path: Path) -> None
     )
     assert run(cfg, []) == 1
     assert not (tmp_path / "run" / "fields").exists()
+
+
+def test_check_spots_a_mosaic_whose_download_stopped_early(tmp_path: Path) -> None:
+    for b in ("f115w", "f150w", "f277w", "f444w"):
+        hdu = fits.ImageHDU(np.ones((100, 100), np.float32))
+        fits.HDUList([fits.PrimaryHDU(), hdu]).writeto(tmp_path / f"a_{b}.fits")
+    short = tmp_path / "a_f277w.fits"
+    short.write_bytes(short.read_bytes()[:20000])
+    cfg = Config(
+        name="t",
+        out=tmp_path / "run",
+        pattern=f"{tmp_path.as_posix()}/{{field}}_{{band}}.fits",
+        device="cpu",
+    )
+    said = [p for p in report(cfg) if "stopped early" in p]
+    assert said == [
+        f"{short} is cut short or empty, so its download probably stopped early"
+    ]

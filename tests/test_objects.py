@@ -21,6 +21,7 @@ from jwst_peculiar.objects.compact import (
     BANDS,
     dark_middle,
     near_edge,
+    on_line,
     one_band,
     one_pair,
     sharp,
@@ -548,3 +549,31 @@ def test_check_says_what_tile_size_would_fit_in_memory(
             " so add tile: 1000 to the config to cut it in pieces"
         )
     ]
+
+
+def test_trails_are_flagged_but_spiky_stars_and_galaxies_are_not() -> None:
+    y, x = np.mgrid[:200, :200]
+    noise = np.random.default_rng(3).normal(0, 1, (200, 200))
+    star = gaussian(100, 100, sigma=1.5, amp=100) + noise
+    for k in range(6):
+        a = np.radians(30 + 60 * k)
+        along = (x - 100) * np.cos(a) + (y - 100) * np.sin(a)
+        across = abs(-(x - 100) * np.sin(a) + (y - 100) * np.cos(a))
+        star += np.where((across < 1) & (along > 0), 2.0, 0.0)
+    cases = {
+        "trail": noise + np.where(abs(y - 100) < 1, 3.0, 0.0),
+        "star with spikes": star,
+        "wide band of light": noise + np.where(abs(y - 100) < 10, 3.0, 0.0),
+        "sky": noise,
+    }
+    t = pd.DataFrame({"ra": [RA0], "dec": [DEC0]})
+    flagged = {
+        k: bool(on_line(t, {"f115w": band(v.astype(np.float32))})[0])
+        for k, v in cases.items()
+    }
+    assert flagged == {
+        "trail": True,
+        "star with spikes": False,
+        "wide band of light": False,
+        "sky": False,
+    }

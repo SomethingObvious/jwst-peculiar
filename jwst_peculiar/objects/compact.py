@@ -9,6 +9,10 @@ tests as `flag_*` columns.
 - `uncovered`: an aperture reaches uncovered sky.
 - `edge`: uncovered sky within 1" in any band, where a mosaic's edge has fewer
   exposures and more noise.
+- `line`: in some band, a thin straight line running through it from 0.4" to 1.5"
+  on both sides, 4 sigma brighter than the sky 0.25" either side of it and at least
+  a fifth of its centre, which is a trail, a stripe or a star's spike. A star's own
+  spikes are far fainter than its centre, and a galaxy is wider than the gap.
 - `one_band`: under 3 sigma in all but one band in the 0.1" aperture, or a one-band
   peak, its best band at S/N 10 or more and every other under max(4, a twentieth).
 - `sharp`: more of its flux in 0.1" than a star has, by 3 sigma in one band or
@@ -16,8 +20,8 @@ tests as `flag_*` columns.
 - `one_pair`: seen in only one of NIRCam's two exposure pairs.
 - `dark_middle`: a band under S/N 1 between two at S/N 3 or more.
 - `listed_star`: a listed star brighter in F150W than F444W within 0.3", or within
-  2" of a listed star 20 times brighter in F277W. Cool brown dwarfs are redder, so
-  they stay.
+  2" of a star 20 times brighter in F277W, listed or one of the field's segments at
+  S/N 100 as concentrated as a star. Cool brown dwarfs are redder, so they stay.
 - `gaia`: within 0.3" of a Gaia star's spikes or halo.
 - `piece`: a deblended piece of a stamped object's parent, inside its stamp.
 - `pixel`: a pixel 5 sigma under the sky, or a lone peak by `flags.blobs`, within
@@ -32,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 from typing import TYPE_CHECKING, Any
+import warnings
 
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
@@ -75,8 +80,13 @@ PAIRS = (("f115w", "f277w"), ("f150w", "f444w"))
 SEEN, UNSEEN = 5.0, 2.0
 DARK_SEEN, DARK = 3.0, 1.0
 POINT, HALO_REACH, HALO_RATIO = 0.3, 2.0, 20.0
+# 97% of COSMOS-Web's 911 listed stars over S/N 100 pass, and 213 unlisted sources
+POINT_SN, POINT_F150W, POINT_F277W = 100.0, 0.75, (0.5, 0.8)
 NEG_SIG, APERTURE, BLOCK = 5.0, 0.25, 1.5
 EDGE = 1.0
+LINE_IN, LINE_OUT, LINE_SIDE = 0.4, 1.5, 0.25
+# a median of n pixels has 1.2533 times the noise of their mean
+LINE_SIG, LINE_SHARE, MEDIAN_NOISE = 4.0, 0.2, 1.2533
 COMPONENTS = 20
 LIST, STAMPS = "compact.csv", "compact_stamps.npy"
 TILE, CUTOUT = 112, 2.4
@@ -152,23 +162,39 @@ def dark_middle(t: pd.DataFrame) -> Bools:
     return out
 
 
+def point_sources(segments: pd.DataFrame) -> pd.DataFrame:
+    """Return the bright segments as concentrated as a star in F150W and F277W."""
+    with np.errstate(divide="ignore", invalid="ignore"):
+        c150 = segments.f_f150w_10.to_numpy(float) / segments.f_f150w_25.to_numpy(float)
+        c277 = segments.f_f277w_10.to_numpy(float) / segments.f_f277w_25.to_numpy(float)
+    keep = (segments.sn.to_numpy(float) >= POINT_SN) & (c150 >= POINT_F150W)
+    keep &= (c150 <= 1) & (c277 >= POINT_F277W[0]) & (c277 <= POINT_F277W[1])
+    return pd.DataFrame(segments.loc[keep, ["ra", "dec"]])
+
+
 def listed_star(t: pd.DataFrame, stars: pd.DataFrame, segments: pd.DataFrame) -> Bools:
-    """Return which candidates are a blue listed star or in a much brighter one's halo.
+    """Return which candidates are a blue listed star or in a much brighter star's halo.
 
     A star's F277W flux is that of the segment within 0.3" of it. Many stars bright
-    in the infrared are fainter than Gaia's G 21, so the list catches what Gaia misses.
+    in the infrared are fainter than Gaia's G 21, so the list catches what Gaia misses,
+    and the field's own bright point sources count as stars for the halo too.
 
     Returns:
         One flag per candidate.
     """
     out = np.zeros(len(t), bool)
-    if not len(stars) or not len(t):
+    if not len(t):
         return out
     dec0 = float(t.dec.median())
-    sxy, txy = sky_xy(stars.ra, stars.dec, dec0), sky_xy(t.ra, t.dec, dec0)
-    d, _ = cKDTree(sxy).query(txy)
-    blue = t.f_f150w_25.to_numpy(float) > t.f_f444w_25.to_numpy(float)
-    out |= (d < POINT) & blue
+    txy = sky_xy(t.ra, t.dec, dec0)
+    if len(stars):
+        d, _ = cKDTree(sky_xy(stars.ra, stars.dec, dec0)).query(txy)
+        blue = t.f_f150w_25.to_numpy(float) > t.f_f444w_25.to_numpy(float)
+        out |= (d < POINT) & blue
+    halo = pd.concat([stars[["ra", "dec"]], point_sources(segments)])
+    if not len(halo) or not len(segments):
+        return out
+    sxy = sky_xy(halo.ra, halo.dec, dec0)
     dseg, j = cKDTree(sky_xy(segments.ra, segments.dec, dec0)).query(sxy)
     flux = np.where(dseg < POINT, segments.f_f277w_25.to_numpy(float)[j], np.nan)
     mine = np.maximum(t.f_f277w_25.to_numpy(float), 0)
@@ -246,6 +272,58 @@ def near_edge(t: pd.DataFrame, bands: dict[str, Band]) -> Bools:
     return out
 
 
+def _medians(band: Band, x: Floats, y: Floats) -> Floats:
+    # the median along each row of sample points, NaN off the image
+    ny, nx = band.data.shape
+    ix, iy = np.rint(x).astype(int), np.rint(y).astype(int)
+    inside = (ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny)
+    v = band.data[np.clip(iy, 0, ny - 1), np.clip(ix, 0, nx - 1)]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        return np.asarray(np.nanmedian(np.where(inside, v, np.nan), axis=-1), float)
+
+
+def _brightest_line(band: Band, x: Floats, y: Floats, *, r: Floats) -> Floats:
+    # each candidate's brightest line through it, less the brighter of its two sides
+    th = np.arange(0, np.pi, 1 / r[-1])[:, None]
+    rx, ry = np.cos(th) * r, np.sin(th) * r
+    sx, sy = -np.sin(th) * LINE_SIDE / band.scale, np.cos(th) * LINE_SIDE / band.scale
+    xb, yb = x[:, None, None], y[:, None, None]
+    arms = []
+    for sign in (1, -1):
+        mid = _medians(band, xb + sign * rx, yb + sign * ry)
+        left = _medians(band, xb + sign * rx + sx, yb + sign * ry + sy)
+        right = _medians(band, xb + sign * rx - sx, yb + sign * ry - sy)
+        arms.append(mid - np.fmax(left, right))
+    line = np.fmin(*arms)
+    return np.asarray(np.max(np.where(np.isfinite(line), line, -np.inf), axis=1), float)
+
+
+def _on_line(band: Band, x: Floats, y: Floats) -> Bools:
+    # arms sampled 1 pixel apart, and angles 1 pixel apart at their end
+    r = np.arange(LINE_IN / band.scale, LINE_OUT / band.scale)
+    best = _brightest_line(band, x, y, r=r)
+    ny, nx = band.data.shape
+    cx = np.clip(np.rint(x).astype(int), 0, nx - 1)
+    cy = np.clip(np.rint(y).astype(int), 0, ny - 1)
+    rms = band.rms[cy, cx]
+    noise = MEDIAN_NOISE * np.sqrt(2) * rms / np.sqrt(len(r))
+    # NaN off the image, so a band that misses the candidate never flags it
+    centre = np.maximum(band.data[cy, cx], rms)
+    return np.asarray((best > LINE_SIG * noise) & (best > LINE_SHARE * centre), bool)
+
+
+def on_line(t: pd.DataFrame, bands: dict[str, Band], batch: int = 200) -> Bools:
+    """Return which candidates sit on a thin straight line in any band."""
+    out = np.zeros(len(t), bool)
+    ra, dec = t.ra.to_numpy(float), t.dec.to_numpy(float)
+    for band in bands.values():
+        x, y = band.pixels(ra, dec)
+        for s in range(0, len(t), batch):
+            out[s : s + batch] |= _on_line(band, x[s : s + batch], y[s : s + batch])
+    return out
+
+
 def compact_flags(  # noqa: PLR0913 every test needs its own input
     t: pd.DataFrame,
     bands: dict[str, Band],
@@ -259,6 +337,7 @@ def compact_flags(  # noqa: PLR0913 every test needs its own input
     """Add every compact test to `t` as a `flag_*` column."""
     t["flag_uncovered"] = ~t.cover.to_numpy(bool)
     t["flag_edge"] = near_edge(t, bands)
+    t["flag_line"] = on_line(t, bands)
     t["flag_one_band"] = one_band(t)
     t["flag_sharp"] = sharp(t)
     t["flag_one_pair"] = one_pair(t)

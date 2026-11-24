@@ -66,6 +66,15 @@ def stamp_pixels(band: Band, corners: SkyCoords, grid: Grid) -> list[Floats]:
     return [rows, cols]
 
 
+def mid_dec(t: pd.DataFrame) -> float:
+    """Return the declination to project `t` around, any at all when it's empty.
+
+    Returns:
+        Degrees.
+    """
+    return float(t.dec.median()) if len(t) else 0.0
+
+
 def sky_xy(ra: Any, dec: Any, dec0: float) -> Floats:  # noqa: ANN401 arrays or columns
     """Return positions in arcsec on a flat sky, with one cos(dec) for the field.
 
@@ -154,7 +163,7 @@ class StampBoxes:
     def __init__(self, t: pd.DataFrame, grid: Band) -> None:
         """Place every object's stamp on `grid`."""
         self.t, self.grid = t, grid
-        self.dec0 = float(t.dec.median())
+        self.dec0 = mid_dec(t)
         self.cx, self.cy = grid.pixels(t.ra.to_numpy(float), t.dec.to_numpy(float))
         self.half = t.half.to_numpy(float)
         self.hpx = self.half / grid.scale
@@ -244,7 +253,7 @@ def on_spikes(
     star = gaia.loc[gaia.classprob_dsc_combmod_star.to_numpy(float) > STAR_PROB]
     if not len(star) or not len(t):
         return hit
-    dec0 = float(t.dec.median())
+    dec0 = mid_dec(t)
     sxy, oxy = sky_xy(star.ra, star.dec, dec0), sky_xy(t.ra, t.dec, dec0)
     mag = star.phot_g_mean_mag.to_numpy(float)
     th = None if roll is None else np.radians(roll + np.arange(0, 360, 60))
@@ -269,7 +278,7 @@ def merged(t: pd.DataFrame, bad: Bools) -> Bools:
         True for those pieces, which are the same galaxy as that brightest piece.
     """
     out = np.zeros(len(t), bool)
-    x, y = sky_xy(t.ra, t.dec, float(t.dec.median())).T
+    x, y = sky_xy(t.ra, t.dec, mid_dec(t)).T
     for _, g in t.loc[~bad].groupby("parent"):
         if len(g) < 2:  # noqa: PLR2004 one piece has nothing to merge with
             continue
@@ -303,7 +312,7 @@ def _star_brightness(band: Band, st: pd.DataFrame) -> Floats:
 def _nearest(st: pd.DataFrame, t: pd.DataFrame) -> Floats:
     if not len(st):
         return np.full(len(t), np.inf)
-    dec0 = float(t.dec.median())
+    dec0 = mid_dec(t)
     d, _ = cKDTree(sky_xy(st.ra, st.dec, dec0)).query(sky_xy(t.ra, t.dec, dec0))
     return np.asarray(d, float)
 

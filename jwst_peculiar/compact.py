@@ -62,6 +62,7 @@ from jwst_peculiar.flags import (
     DETECTED,
     MIN_BANDS,
     known_stars,
+    mid_dec,
     on_spikes,
     sky_xy,
 )
@@ -249,7 +250,7 @@ def listed_star(t: pd.DataFrame, stars: pd.DataFrame, segments: pd.DataFrame) ->
     out = np.zeros(len(t), bool)
     if not len(t):
         return out
-    dec0 = float(t.dec.median())
+    dec0 = mid_dec(t)
     txy = sky_xy(t.ra, t.dec, dec0)
     if len(stars):
         d, _ = cKDTree(sky_xy(stars.ra, stars.dec, dec0)).query(txy)
@@ -272,7 +273,7 @@ def piece(t: pd.DataFrame, objects: pd.DataFrame) -> Bools:
     out = np.zeros(len(t), bool)
     if not len(objects) or not len(t):
         return out
-    dec0 = float(t.dec.median())
+    dec0 = mid_dec(t)
     txy = sky_xy(t.ra, t.dec, dec0)
     groups = objects.groupby("parent").indices
     oxy, half = sky_xy(objects.ra, objects.dec, dec0), objects.half.to_numpy(float)
@@ -291,7 +292,7 @@ def _within(
     out = np.zeros(len(t), bool)
     if not len(ra) or not len(t):
         return out
-    dec0 = float(t.dec.median())
+    dec0 = mid_dec(t)
     pts, rows = sky_xy(ra, dec, dec0), sky_xy(t.ra, t.dec, dec0)
     for i, near in enumerate(cKDTree(pts).query_ball_point(rows, r)):
         if near:

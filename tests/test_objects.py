@@ -1007,7 +1007,11 @@ def half_blank(tmp_path: Path) -> Config:
     sky[:, 700:] = 0
     w = band(sky).wcs
     for b in BANDS:
-        hdu = fits.ImageHDU(sky, w.to_header())
+        data = sky.copy()
+        if b == "f150w":
+            # a hot pixel in one band, in the tile with no objects
+            data[250, 640] = 5000
+        hdu = fits.ImageHDU(data, w.to_header())
         fits.HDUList([fits.PrimaryHDU(), hdu]).writeto(tmp_path / f"a_{b}.fits")
     return Config(
         name="t",

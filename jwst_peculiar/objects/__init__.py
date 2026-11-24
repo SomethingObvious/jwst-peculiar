@@ -24,7 +24,18 @@ import yaml
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-STEPS = ("init", "check", "cut", "embed", "rank", "like", "label", "view", "compact")
+STEPS = (
+    "init",
+    "check",
+    "run",
+    "cut",
+    "embed",
+    "rank",
+    "like",
+    "label",
+    "view",
+    "compact",
+)
 
 
 @dataclass(frozen=True)
@@ -186,6 +197,28 @@ def read_config(path: Path) -> Config:
     return cfg
 
 
+def run(cfg: Config, rest: list[str]) -> int:
+    """Check, cut, embed, rank and list compact sources, stopping at a failed step.
+
+    Returns:
+        The first nonzero exit code, or 0.
+    """
+    from jwst_peculiar.objects import compact  # noqa: PLC0415 these load torch and scikit-learn
+    from jwst_peculiar.objects.check import main as check  # noqa: PLC0415
+    from jwst_peculiar.objects.cut import main as cut  # noqa: PLC0415
+    from jwst_peculiar.objects.embed import main as embed  # noqa: PLC0415
+    from jwst_peculiar.objects.rank import main as rank  # noqa: PLC0415
+
+    steps = [(check, []), (cut, rest), (embed, []), (rank, ["rank"])]
+    if compact.has_bands(cfg):
+        steps.append((compact.main, []))
+    for step, args in steps:
+        code = step(cfg, args)
+        if code:
+            return code
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run one step of the object search.
 
@@ -204,6 +237,8 @@ def main(argv: list[str] | None = None) -> int:
 
         return init([str(a.config), *a.rest])
     cfg = read_config(a.config)
+    if a.step == "run":
+        return run(cfg, a.rest)
     if a.step == "check":
         from jwst_peculiar.objects.check import main as step  # noqa: PLC0415 loads torch for the device
     elif a.step == "cut":

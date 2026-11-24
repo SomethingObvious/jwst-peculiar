@@ -31,16 +31,12 @@ bands: [f115w, f150w, f277w, f444w]
 
 ```
 jwst-peculiar objects init mosaics survey.yaml
-jwst-peculiar objects check survey.yaml
-jwst-peculiar objects cut survey.yaml
-jwst-peculiar objects embed survey.yaml
-jwst-peculiar objects rank survey.yaml
+jwst-peculiar objects run survey.yaml
 jwst-peculiar objects view survey.yaml
 jwst-peculiar objects label survey.yaml
-jwst-peculiar objects compact survey.yaml
 ```
 
-[Usage](docs/usage.md#objects) covers each step and how to label well.
+`run` checks the config, then cuts, embeds and ranks, and lists the compact sources when the bands allow it. [Usage](docs/usage.md#objects) covers each step on its own and how to label well.
 
 ## Try It on Public Data
 
@@ -53,10 +49,7 @@ curl -L -o mosaics/jw02736-o001_t001_nircam_clear-f090w_i2d.fits "https://mast.s
 curl -L -o mosaics/jw02736-o001_t001_nircam_clear-f150w_i2d.fits "https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:JWST/product/jw02736-o001_t001_nircam_clear-f150w_i2d.fits"
 curl -L -o mosaics/jw02736-o001_t001_nircam_clear-f277w_i2d.fits "https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:JWST/product/jw02736-o001_t001_nircam_clear-f277w_i2d.fits"
 curl -L -o mosaics/jw02736-o001_t001_nircam_clear-f444w_i2d.fits "https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:JWST/product/jw02736-o001_t001_nircam_clear-f444w_i2d.fits"
-jwst-peculiar objects check smacs0723.yaml
-jwst-peculiar objects cut smacs0723.yaml
-jwst-peculiar objects embed smacs0723.yaml
-jwst-peculiar objects rank smacs0723.yaml -n 100
+jwst-peculiar objects run smacs0723.yaml
 jwst-peculiar objects view smacs0723.yaml
 ```
 

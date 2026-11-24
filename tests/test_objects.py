@@ -15,7 +15,7 @@ import pytest
 from sklearn.linear_model import LogisticRegression
 
 from jwst_peculiar.bundle import add_site_meta, export, save_verdict
-from jwst_peculiar.objects import Config, read_config, written
+from jwst_peculiar.objects import Config, read_config, run, written
 from jwst_peculiar.objects.check import report
 from jwst_peculiar.objects.compact import (
     BANDS,
@@ -425,3 +425,15 @@ def test_detection_splits_a_blend_and_remembers_its_parent() -> None:
     seg, _ = detect(band(sky + noise))
     assert len(seg) == 2
     assert seg.parent.tolist()[0] == seg.parent.tolist()[1]
+
+
+def test_a_failed_check_stops_run_before_anything_is_cut(tmp_path: Path) -> None:
+    (tmp_path / "a_f277w.fits").touch()
+    cfg = Config(
+        name="t",
+        out=tmp_path / "run",
+        pattern=f"{tmp_path.as_posix()}/{{field}}_{{band}}.fits",
+        device="cpu",
+    )
+    assert run(cfg, []) == 1
+    assert not (tmp_path / "run" / "fields").exists()

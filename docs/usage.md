@@ -48,11 +48,12 @@ device: auto
 
 Without `fields`, every mosaic the pattern matches in the detect band is a field.
 
-`check` reads the config and says what it found before any long step runs: how many fields, any mosaic a field lacks, the memory `cut` needs for the biggest field and the disk the whole run needs, the device `embed` will use and whether the Zoobot weights are downloaded yet. The disk figure is an upper bound, as SMACS 0723 took 2.5 bytes per mosaic pixel and COSMOS-Web 1.5. A misspelled key, a band missing from `bands` or a pattern without `{band}` stops it with the reason.
+`check` reads the config and says what it found before any long step runs: how many fields, any mosaic a field lacks, the memory `cut` needs for the biggest field and the disk the whole run needs, the device `embed` will use and whether the Zoobot weights are downloaded yet. The disk figure is an upper bound, as SMACS 0723 took 2.5 bytes per mosaic pixel and COSMOS-Web 1.5. A misspelled key, a band missing from `bands` or a pattern without `{band}` stops it with the reason. `run` does `check`, `cut`, `embed`, `rank` and, with F115W, F150W, F277W and F444W, `compact` in turn, and stops at the first that fails. Options after the config go to `cut`, like `run survey.yaml --workers 4`.
 
 ```
 jwst-peculiar objects init mosaics survey.yaml  a config from the mosaics' file names
 jwst-peculiar objects check survey.yaml         what the config finds, before a long run
+jwst-peculiar objects run survey.yaml           check, cut, embed, rank and compact in turn
 jwst-peculiar objects cut survey.yaml           detect, measure, flag and cut stamps
 jwst-peculiar objects cut survey.yaml --workers 4
 jwst-peculiar objects embed survey.yaml         Zoobot embeddings of every stamp

@@ -34,6 +34,19 @@ def _pixels(cfg: Config, name: str) -> int:
     return total
 
 
+def _units(cfg: Config, name: str) -> None:
+    units = {
+        str(fits.getheader(cfg.band_path(name, b), cfg.hdu).get("BUNIT", "not given"))
+        for b in cfg.bands
+    }
+    if units != {"MJy/sr"}:
+        # the ranking only uses ratios and S/N, so only the nJy columns are off
+        print(  # noqa: T201 the command's report
+            f"the mosaics' units are {', '.join(sorted(units))} rather than MJy/sr,"
+            " so the f_ and e_ columns won't be in nJy, though the ranking is the same"
+        )
+
+
 def _weights_cached() -> bool:
     from huggingface_hub import try_to_load_from_cache  # noqa: PLC0415 only check needs it
 
@@ -56,6 +69,7 @@ def _memory(cfg: Config, names: list[str], gone: set[str]) -> list[str]:
     px = sizes[biggest]
     said = f"biggest field {biggest}, {px / 1e6:.0f} Mpx"
     print(f"{said}, cut needs about {px * BYTES_PER_PIXEL / 1e9:.1f} GB")  # noqa: T201 the command's report
+    _units(cfg, biggest)
     need = sum(sizes.values()) * DISK_PER_PIXEL / 1e9
     cfg.out.mkdir(parents=True, exist_ok=True)
     free = shutil.disk_usage(cfg.out).free / 1e9

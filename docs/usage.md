@@ -81,6 +81,7 @@ Run `objects check` first, as it catches most of these before a long step does.
 - `Couldn't query Gaia` means the Gaia archive didn't answer. Try again later, point `gaia:` at a CSV of `ra`, `dec`, `phot_g_mean_mag` and `classprob_dsc_combmod_star`, or set `gaia: false` to skip the spike test.
 - `Couldn't load hf_hub:mwalmsley/zoobot-encoder-convnext_nano` means the Zoobot weights couldn't be downloaded. They come from the Hugging Face hub the first time `embed` runs, and are read from its cache after that.
 - A step stopped with Ctrl+C or a full disk can be run again. Each field's stamps, embeddings and compact list are written whole, and finished fields are skipped.
+- `the mosaics' units are ... rather than MJy/sr` means the `f_` and `e_` columns in `objects.csv` aren't in nJy. Nothing else changes, as the tests and rankings only use ratios and S/N, but every band needs the same units.
 - `Port 8765 is taken` only means another viewer is open, and this one uses a free port instead.
 - `cut` needs memory for a whole field at once, about 31 bytes per pixel over all its bands. If a field doesn't fit, leave a band out of `bands`, and with `--workers` each worker needs that much.
 

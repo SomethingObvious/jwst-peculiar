@@ -6,6 +6,7 @@ import pathlib
 import re
 from typing import TYPE_CHECKING
 
+from astropy.io import fits
 from astropy.wcs import WCS
 import numpy as np
 import pandas as pd
@@ -399,3 +400,20 @@ def test_a_compact_candidate_near_a_mosaic_edge_is_flagged() -> None:
     ra, dec = b.wcs.pixel_to_world_values(x, np.full(3, 100.0))
     t = pd.DataFrame({"ra": ra, "dec": dec})
     assert near_edge(t, dict.fromkeys(BANDS, b)).tolist() == [True, False, True]
+
+
+def test_check_says_when_the_flux_columns_will_not_be_in_njy(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for b in ("f115w", "f150w", "f277w", "f444w"):
+        unit = "10*nJy" if b == "f444w" else "MJy/sr"
+        hdu = fits.ImageHDU(np.ones((4, 4), np.float32), fits.Header({"BUNIT": unit}))
+        fits.HDUList([fits.PrimaryHDU(), hdu]).writeto(tmp_path / f"a_{b}.fits")
+    cfg = Config(
+        name="t",
+        out=tmp_path / "run",
+        pattern=f"{tmp_path.as_posix()}/{{field}}_{{band}}.fits",
+        device="cpu",
+    )
+    report(cfg)
+    assert "units are 10*nJy, MJy/sr rather than MJy/sr" in capsys.readouterr().out

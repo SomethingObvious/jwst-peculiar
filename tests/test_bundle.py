@@ -20,7 +20,7 @@ import pytest
 import yaml
 
 from jwst_peculiar import bundle, candidates, catalogues, server
-from jwst_peculiar.server import make_handler
+from jwst_peculiar.server import make_handler, open_server
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -510,3 +510,15 @@ def test_renaming_a_run_keeps_its_saved_verdicts(
     server.main([str(run_dir), str(data), "--export", str(site), "--name", "A Field"])
     info = json.loads((site / "run/index.json").read_text(encoding="utf-8"))["run"]
     assert (info["name"], info["id"]) == ("A Field", run_dir.name)
+
+
+def test_a_second_viewer_moves_to_a_free_port(run: tuple[Path, Path]) -> None:
+    served = bundle.RunBundle(*run, writable=False)
+    first = open_server(served, 0)
+    port = first.server_port
+    try:
+        second = open_server(served, port)
+        assert second.server_port not in {0, port}
+        second.server_close()
+    finally:
+        first.server_close()

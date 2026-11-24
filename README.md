@@ -38,9 +38,29 @@ jwst-peculiar objects compact survey.yaml
 
 [Usage](docs/usage.md#objects) covers each step and how to label well.
 
+## Try It on Public Data
+
+[examples/smacs0723.yaml](examples/smacs0723.yaml) runs it on Webb's First Deep Field, which is what the demo shows. The four mosaics are 4.2 GB from MAST, and `curl` comes with Windows 10 and later, macOS and Linux.
+
+```
+cd examples
+mkdir mosaics
+curl -L -o mosaics/jw02736-o001_t001_nircam_clear-f090w_i2d.fits "https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:JWST/product/jw02736-o001_t001_nircam_clear-f090w_i2d.fits"
+curl -L -o mosaics/jw02736-o001_t001_nircam_clear-f150w_i2d.fits "https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:JWST/product/jw02736-o001_t001_nircam_clear-f150w_i2d.fits"
+curl -L -o mosaics/jw02736-o001_t001_nircam_clear-f277w_i2d.fits "https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:JWST/product/jw02736-o001_t001_nircam_clear-f277w_i2d.fits"
+curl -L -o mosaics/jw02736-o001_t001_nircam_clear-f444w_i2d.fits "https://mast.stsci.edu/api/v0.1/Download/file?uri=mast:JWST/product/jw02736-o001_t001_nircam_clear-f444w_i2d.fits"
+jwst-peculiar objects check smacs0723.yaml
+jwst-peculiar objects cut smacs0723.yaml
+jwst-peculiar objects embed smacs0723.yaml
+jwst-peculiar objects rank smacs0723.yaml -n 100
+jwst-peculiar objects view smacs0723.yaml
+```
+
+On a laptop `cut` took a minute and 3.7 GB of memory, and `embed` took 22 seconds on its GPU or 3.5 minutes on its CPU, after downloading the Zoobot weights the first time. `view` opens the list in your browser.
+
 ## What It Won't Do
 
-A stamp needs S/N over 40 and a semimajor axis over 0.12", so anything smaller only reaches the compact list, which needs all four bands. Rarity is relative to the fields you give it, so whatever is common there counts as ordinary. Nothing it lists is a discovery until someone has looked at the data.
+A stamp needs S/N over 40 and a semimajor axis over 0.12", so anything smaller only reaches the compact list, which needs all four bands. Rarity is relative to the fields you give it, so whatever is common there counts as ordinary, though `rank --reference` can add a bigger survey's objects to compare against. Nothing it lists is a discovery until someone has looked at the data.
 
 ## The Patch Search
 

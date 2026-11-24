@@ -6,6 +6,8 @@ other. Flagged objects are left out. Once there are labels, `label` fits a
 three-class logistic regression (bad, ordinary, worth a look) on the embeddings and
 `rank` multiplies rarity by the chance an object is worth a look. Ranks count
 systems: an object only takes a place when it shares no sky with one placed above.
+`--reference` adds another run's objects as neighbours, so a run of one or two
+fields can be ranked against what a bigger survey says is common.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -22,8 +25,6 @@ from scipy.spatial import cKDTree
 from jwst_peculiar.bundle import read_verdicts
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     import numpy.typing as npt
 
     from jwst_peculiar.objects import Config
@@ -121,18 +122,33 @@ class Sky:
         return keep
 
 
-def rarity(e: npt.NDArray[np.float32], sky: Sky, block: int = 1024) -> Floats:
+def rarity(
+    e: npt.NDArray[np.float32],
+    sky: Sky,
+    *,
+    block: int = 1024,
+    ref: npt.NDArray[np.float32] | None = None,
+) -> Floats:
     """Return one minus the cosine to the K-th nearest object sharing no sky.
+
+    `ref` holds more neighbours, from elsewhere on the sky, after the rows of `e`.
 
     Returns:
         One value per row.
     """
+    others = e if ref is None else np.concatenate([e, ref])
+    # a block of similarities stays near 200 MB however big the reference is
+    block = max(16, min(block, 50_000_000 // len(others)))
+    if len(others) < 2:  # noqa: PLR2004 an object alone has no neighbour
+        return np.ones(len(e))
+    # a run of a handful of objects makes do with the farthest neighbour it has
+    k = min(K, len(others) - 1)
     out = np.empty(len(e))
     for i in range(0, len(e), block):
-        s = e[i : i + block] @ e.T
+        s = e[i : i + block] @ others.T
         for a in range(len(s)):
             s[a, sky.near(i + a)] = -1
-        part = np.partition(s, -K, axis=1)[:, -K]
+        part = np.partition(s, -k, axis=1)[:, -k]
         out[i : i + block] = 1 - part
     return out
 
@@ -165,7 +181,24 @@ def p_worth(model: dict[str, Any], e: npt.NDArray[np.float32]) -> Floats:
     return np.asarray(p[:, list(model["classes"]).index(WORTH)], float)
 
 
-def scores(cfg: Config, obj: Objects) -> tuple[Floats, Floats | None]:
+def reference(obj: Objects, other: Objects) -> npt.NDArray[np.float32]:
+    """Return the embeddings of another run's neighbours, less any on this run's sky.
+
+    Returns:
+        One row per object in the other run's pool that no object here overlaps.
+    """
+    sky = Sky(obj.t)
+    pool = other.t.loc[other.pool]
+    cos = np.cos(np.radians(float(obj.t.dec.median())))
+    xy = np.c_[pool.ra.to_numpy() * cos * 3600, pool.dec.to_numpy() * 3600]
+    d, _ = sky.tree.query(xy, distance_upper_bound=sky.reach)
+    away = d > np.maximum(pool.half.to_numpy(), sky.reach)
+    return np.asarray(other.e[other.pool][away], np.float32)
+
+
+def scores(
+    cfg: Config, obj: Objects, ref: npt.NDArray[np.float32] | None = None
+) -> tuple[Floats, Floats | None]:
     """Return rarity, and rarity times the chance of worth a look if there's a model.
 
     Returns:
@@ -173,7 +206,8 @@ def scores(cfg: Config, obj: Objects) -> tuple[Floats, Floats | None]:
     """
     pool = obj.pool
     rar = np.full(len(pool), -np.inf)
-    rar[pool] = rarity(obj.e[pool], Sky(obj.t.loc[pool].reset_index(drop=True)))
+    sky = Sky(obj.t.loc[pool].reset_index(drop=True))
+    rar[pool] = rarity(obj.e[pool], sky, ref=ref)
     path = cfg.out / MODEL
     if not path.exists():
         return rar, None
@@ -252,9 +286,20 @@ def rank_main(cfg: Config, argv: list[str]) -> int:
         action="store_true",
         help="write n systems from places 101 to 2,000 at random to sample.csv",
     )
+    p.add_argument(
+        "--reference",
+        type=Path,
+        help="another run's config whose objects count as neighbours too",
+    )
     a = p.parse_args(argv)
     obj = load(cfg)
-    rar, weighted = scores(cfg, obj)
+    ref = None
+    if a.reference:
+        from jwst_peculiar.objects import read_config  # noqa: PLC0415 objects imports this module's steps
+
+        ref = reference(obj, load(read_config(a.reference)))
+        print(f"{len(ref)} reference objects")  # noqa: T201 the command's progress
+    rar, weighted = scores(cfg, obj, ref)
     use = rar if a.image_only or weighted is None else weighted
     write = write_sample if a.sample else write_list
     path = write(cfg, obj, use, n=a.n)

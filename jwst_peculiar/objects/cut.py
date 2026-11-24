@@ -31,7 +31,7 @@ from photutils.segmentation import SourceCatalog, deblend_sources, detect_source
 from PIL import Image
 from scipy.ndimage import map_coordinates, maximum_filter
 
-from jwst_peculiar.objects import compact
+from jwst_peculiar.objects import compact, written
 from jwst_peculiar.objects.flags import blobs, flags, grid, stamp_pixels
 from jwst_peculiar.prep import asinh_to_uint8, wcs_record
 
@@ -414,9 +414,11 @@ def cut_objects(
     out = cfg.out / "fields" / name
     seg.to_csv(out / "segments.csv", index=False)
     t.to_csv(out / "objects.csv", index=False)
-    np.save(out / "stamps.npy", cut)
     (out / "noise.json").write_text(json.dumps(m.noise), encoding="utf-8")
     describe(out, bands[cfg.colour[1]], cfg.colour)
+    # last, as a field with stamps.npy counts as cut
+    with written(out / "stamps.npy") as tmp:
+        np.save(tmp, cut)
     return t
 
 
@@ -434,7 +436,8 @@ def cut_compact(
     compact.compact_flags(
         small, m.bands, cfg=cfg, objects=objects, segments=m.seg, gaia=gaia, lone=lone
     )
-    small.to_csv(cfg.out / "fields" / name / compact.LIST, index=False)
+    with written(cfg.out / "fields" / name / compact.LIST) as tmp:
+        small.to_csv(tmp, index=False)
     return small
 
 

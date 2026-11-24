@@ -1,6 +1,6 @@
 [project]
 name = "jwst-peculiar"
-version = "0.5.0"
+version = "0.6.0"
 description = "Finds odd objects in JWST NIRCam mosaics, with artefact tests, Zoobot embeddings and a labelling viewer"
 readme = "README.md"
 requires-python = ">=3.11"

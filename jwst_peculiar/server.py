@@ -17,6 +17,7 @@ import json
 import logging
 import mimetypes
 from pathlib import Path
+import sys
 import threading
 from typing import Any, ClassVar
 from urllib.parse import unquote, urlsplit
@@ -225,9 +226,31 @@ def built_viewer() -> Path:
     return APP_DIR
 
 
+class Server(ThreadingHTTPServer):
+    """A server that won't share its port with one already running."""
+
+    # Windows lets a second socket bind a port that has SO_REUSEADDR set, so a
+    # second viewer would quietly share the first one's port.
+    allow_reuse_address = sys.platform != "win32"
+
+
+def open_server(bundle: Served, port: int) -> Server:
+    """Bind the viewer to `port` on localhost, or to a free port if it's taken.
+
+    Returns:
+        The bound server.
+    """
+    handler = make_handler(bundle)
+    try:
+        return Server(("127.0.0.1", port), handler)
+    except OSError:
+        logger.warning("Port %d is taken, so the viewer is using a free one", port)
+        return Server(("127.0.0.1", 0), handler)
+
+
 def serve(bundle: Served, *, port: int, browser: bool) -> None:
     """Serve `bundle` and the viewer on localhost until Ctrl+C."""
-    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(bundle))
+    server = open_server(bundle, port)
     url = f"http://127.0.0.1:{server.server_port}/"
     logger.info("Serving %d tiles at %s, Ctrl+C to stop", len(bundle.tiles), url)
     if browser:

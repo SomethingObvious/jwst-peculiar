@@ -15,6 +15,7 @@ import numpy as np
 import torch
 
 from jwst_peculiar.data import resolve_device
+from jwst_peculiar.objects import written
 
 if TYPE_CHECKING:
     from jwst_peculiar.objects import Config
@@ -37,9 +38,16 @@ def load_encoder(size: str, device: torch.device) -> torch.nn.Module:
     except ImportError as err:
         msg = "objects embed needs timm: pip install timm"
         raise SystemExit(msg) from err
-    net: torch.nn.Module = timm.create_model(
-        ENCODERS[size], pretrained=True, num_classes=0
-    )
+    try:
+        net: torch.nn.Module = timm.create_model(
+            ENCODERS[size], pretrained=True, num_classes=0
+        )
+    except OSError as err:
+        msg = (
+            f"Couldn't load {ENCODERS[size]} ({err}). The first embed downloads it from"
+            " the Hugging Face hub, so it needs the internet once."
+        )
+        raise SystemExit(msg) from err
     return net.eval().to(device)
 
 
@@ -70,13 +78,17 @@ def main(cfg: Config, argv: list[str]) -> int:
     p.add_argument("--encoder", choices=ENCODERS, default="nano")
     p.add_argument("--redo", action="store_true", help="embed fields already embedded")
     a = p.parse_args(argv)
+    fields = cfg.cut_fields()
     device = resolve_device(cfg.device)
     net = load_encoder(a.encoder, device)
     name = "embeddings.npy" if a.encoder == "nano" else f"embeddings_{a.encoder}.npy"
-    for folder in sorted((cfg.out / "fields").iterdir()):
+    for field in fields:
+        folder = cfg.out / "fields" / field
         target = folder / name
-        if (folder / "stamps.npy").exists() and (a.redo or not target.exists()):
+        if a.redo or not target.exists():
             stamps = np.load(folder / "stamps.npy", mmap_mode="r")
-            np.save(target, embed(stamps, net, device=device).astype(np.float32))
+            rows = embed(stamps, net, device=device).astype(np.float32)
+            with written(target) as tmp:
+                np.save(tmp, rows)
             print(f"{folder.name}: {len(stamps)} stamps embedded", flush=True)  # noqa: T201 the command's progress
     return 0

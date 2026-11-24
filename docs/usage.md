@@ -48,11 +48,15 @@ device: auto
 
 Without `fields`, every mosaic the pattern matches in the detect band is a field.
 
+`check` reads the config and says what it found before any long step runs: how many fields, any mosaic a field lacks, the memory `cut` needs for the biggest field, the device `embed` will use and whether the Zoobot weights are downloaded yet. A misspelled key, a band missing from `bands` or a pattern without `{band}` stops it with the reason.
+
 ```
+jwst-peculiar objects check survey.yaml       what the config finds, before a long run
 jwst-peculiar objects cut survey.yaml         detect, measure, flag and cut stamps
 jwst-peculiar objects embed survey.yaml       Zoobot embeddings of every stamp
 jwst-peculiar objects rank survey.yaml -n 500 the rarest systems, to rank.csv
 jwst-peculiar objects rank survey.yaml --sample -n 200
+jwst-peculiar objects rank survey.yaml --reference cosmos-web.yaml
 jwst-peculiar objects like survey.yaml jw01727-o001_t001:5159
 jwst-peculiar objects view survey.yaml --list sample.csv
 jwst-peculiar objects label survey.yaml
@@ -61,9 +65,9 @@ jwst-peculiar objects view survey.yaml --list compact.csv
 jwst-peculiar objects view survey.yaml --export site/ --site_url https://example.org/demo/
 ```
 
-`cut` writes each field's objects to `fields/FIELD/objects.csv` with their aperture photometry in nJy and a `flag_*` column for every artefact test. A flagged object is left out of the ranking, and `flag_outshone`, a brighter neighbour in the stamp, only keeps it off the list. Each field is read into memory whole, which peaked at 2.4 GB for a 4,600 by 11,500 pixel COSMOS-Web tile.
+`cut` writes each field's objects to `fields/FIELD/objects.csv` with their aperture photometry in nJy and a `flag_*` column for every artefact test. A flagged object is left out of the ranking, and `flag_outshone`, a brighter neighbour in the stamp, only keeps it off the list. Each field is read into memory whole, about 31 bytes per pixel over all its bands, so SMACS 0723's 121 Mpx peaked at 3.7 GB.
 
-`rank` counts systems, so the stamps of one galaxy take one place between them. `like` takes object ids or `RA,DEC` in degrees and lists the objects most like them. `view` opens any of these lists in the viewer, where `1` to `4` work as they do for tiles and save to `verdicts.csv` in the run folder. Once there are at least 5 verdicts of each kind, `label` fits a classifier on them, and from then on `rank` multiplies rarity by its chance that an object is worth a look (`--image-only` turns that off). Interesting and known objects both count as worth a look, and a known object stays off later lists. The list alone teaches it what rare looks like but not what ordinary looks like, so label a `--sample` batch from places 101 to 2,000 now and then as well. `view --export` writes a list as a static site instead, and `--site_url` adds its social card and sitemap for where it will be hosted.
+`rank` counts systems, so the stamps of one galaxy take one place between them. `rank --reference other.yaml` counts another run's objects as neighbours too, so a run of one or two fields can be ranked against what a bigger survey says is common. Ranking 101 COSMOS-Web fields one at a time, with the other fields as reference, put 158 known odd objects in the fields' top 20s instead of 137, and left the top 5% the same (234 rather than 236). It works best when both runs use the same bands for colour, as a stamp's colours are part of what the embedding sees. `like` takes object ids or `RA,DEC` in degrees and lists the objects most like them. `view` opens any of these lists in the viewer, where `1` to `4` work as they do for tiles and save to `verdicts.csv` in the run folder. Once there are at least 5 verdicts of each kind, `label` fits a classifier on them, and from then on `rank` multiplies rarity by its chance that an object is worth a look (`--image-only` turns that off). Interesting and known objects both count as worth a look, and a known object stays off later lists. The list alone teaches it what rare looks like but not what ordinary looks like, so label a `--sample` batch from places 101 to 2,000 now and then as well. `view --export` writes a list as a static site instead, and `--site_url` adds its social card and sitemap for where it will be hosted.
 
 `compact` ranks the sources too small for a stamp, which is where little red dots and brown dwarfs end up. `cut` writes each field's candidates to `fields/FIELD/compact.csv` when the config has F115W, F150W, F277W and F444W: segments at S/N 10 or more with a semimajor axis of 0.12" or less or an area under 60 pixels, found in F277W or, where F277W has nothing, in F444W. Each has its own `flag_*` tests for cosmic rays, hot pixels, stars and their spikes. `compact` ranks the unflagged ones on how rare their colours and concentrations are, and writes a four-panel tile of each (colour and F115W on top, F277W and F444W below) so `view` can show them. It finds known little red dots very well, though about a third of its top 100 on COSMOS-Web development fields, and about half on a held-out block with a lot of short-wave striping, were still artefacts or stars, so expect to throw a fair number out.
 

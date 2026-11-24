@@ -7,6 +7,7 @@ doesn't wait for torch to load.
 from __future__ import annotations
 
 import importlib
+from importlib.metadata import version
 import sys
 
 COMMANDS = {
@@ -58,7 +59,7 @@ COMMANDS = {
     "objects": (
         "jwst_peculiar.objects",
         "main",
-        "Find odd objects: cut, embed, rank, like, view and label.",
+        "Find odd objects: check, cut, embed, rank, like, view and label.",
     ),
     "unzip": (
         "jwst_peculiar.unzip",
@@ -87,8 +88,10 @@ def main(argv: list[str] | None = None) -> int:
         The subcommand's exit code, or 2 when there's no such command.
     """
     argv = sys.argv[1:] if argv is None else argv
-    if not argv or argv[0] in ("-h", "--help"):
-        sys.stdout.write(usage() + "\n")
+    if not argv or argv[0] in ("-h", "--help", "--version"):
+        asked = argv[:1] == ["--version"]
+        said = f"jwst-peculiar {version('jwst-peculiar')}" if asked else usage()
+        sys.stdout.write(said + "\n")
         return 0
     if argv[0] not in COMMANDS:
         sys.stderr.write(
@@ -99,4 +102,9 @@ def main(argv: list[str] | None = None) -> int:
     # argparse names the program after argv[0], and this makes its usage line say
     # `jwst-peculiar prep` rather than just `jwst-peculiar`.
     sys.argv[0] = f"jwst-peculiar {argv[0]}"
-    return getattr(importlib.import_module(module), func)(argv[1:]) or 0
+    try:
+        return getattr(importlib.import_module(module), func)(argv[1:]) or 0
+    except KeyboardInterrupt:
+        # every step writes its outputs whole, so a rerun picks up where this left off
+        sys.stderr.write("jwst-peculiar: stopped.\n")
+        return 130

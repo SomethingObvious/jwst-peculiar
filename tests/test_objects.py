@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import json
+import pathlib
+import re
 from typing import TYPE_CHECKING
 
 from astropy.wcs import WCS
@@ -12,18 +14,21 @@ import pytest
 from sklearn.linear_model import LogisticRegression
 
 from jwst_peculiar.bundle import add_site_meta, export, save_verdict
-from jwst_peculiar.objects import Config, read_config
+from jwst_peculiar.objects import Config, read_config, written
+from jwst_peculiar.objects.check import report
 from jwst_peculiar.objects.compact import dark_middle, one_band, one_pair, sharp
 from jwst_peculiar.objects.cut import Band, N, render
 from jwst_peculiar.objects.flags import blobs, merged, on_spikes
 from jwst_peculiar.objects.rank import (
     CLASSES,
     MODEL,
+    Objects,
     Sky,
     label_main,
     p_worth,
     rank_main,
     rarity,
+    reference,
 )
 from jwst_peculiar.objects.view import ObjectBundle
 from jwst_peculiar.prep import wcs_record
@@ -141,6 +146,22 @@ def test_rarity_ignores_neighbours_that_share_its_sky() -> None:
     assert rar[1] == pytest.approx(0.0, abs=1e-6)
 
 
+def test_a_reference_run_supplies_neighbours_from_elsewhere() -> None:
+    u, w = np.array([1.0, 0.0]), np.array([0.0, 1.0])
+    # Five objects like w in another field, and one sitting on object 0 here.
+    here = Objects(
+        offsets([0, 100], [0, 0]).assign(flag_x=False), np.array([u, w], np.float32)
+    )
+    there = offsets([0.1, 5000, 5100, 5200, 5300, 5400], [0] * 6).assign(flag_x=False)
+    other = Objects(there, np.array([u] + [w] * 5, np.float32))
+    ref = reference(here, other)
+    assert ref.tolist() == [w.tolist()] * 5
+    alone = rarity(here.e, Sky(here.t))
+    with_ref = rarity(here.e, Sky(here.t), ref=ref)
+    assert alone[1] == pytest.approx(1.0, abs=1e-6)
+    assert with_ref.tolist() == pytest.approx([1.0, 0.0], abs=1e-6)
+
+
 def test_label_model_probabilities_match_scikit_learn() -> None:
     rng = np.random.default_rng(0)
     e = rng.normal(size=(90, 8)).astype(np.float32)
@@ -149,6 +170,14 @@ def test_label_model_probabilities_match_scikit_learn() -> None:
     clf = LogisticRegression(C=0.1, class_weight="balanced", max_iter=5000).fit(e, y)
     model = {"coef": clf.coef_, "intercept": clf.intercept_, "classes": clf.classes_}
     assert np.allclose(p_worth(model, e), clf.predict_proba(e)[:, 2], atol=1e-6)
+
+
+def test_the_example_config_reads() -> None:
+    examples = pathlib.Path(__file__).parents[1] / "examples"
+    cfg = read_config(examples / "smacs0723.yaml")
+    assert cfg.band_path("jw02736-o001_t001", "f090w") == (
+        examples / "mosaics" / "jw02736-o001_t001_nircam_clear-f090w_i2d.fits"
+    )
 
 
 def test_config_resolves_paths_and_finds_fields(
@@ -164,6 +193,57 @@ def test_config_resolves_paths_and_finds_fields(
     assert cfg.out == tmp_path / "run"
     assert cfg.field_names() == ["a", "b"]
     assert cfg.band_path("a", "f150w") == tmp_path / "data" / "a_f150w.fits"
+
+
+BASE = "name: t\nout: run\npattern: d/{field}_{band}.fits\n"
+
+
+@pytest.mark.parametrize(
+    ("text", "said"),
+    [
+        (f"{BASE}devise: cpu\n", "Did you mean 'device'?"),
+        ("name: t\nout: run\npattern: d/{field}.fits\n", "needs {band}"),
+        (f"{BASE}detect: f200w\n", "uses ['f200w']"),
+        (f"{BASE}colour: [f277w]\n", "needs three bands"),
+        ("name: t\nout: [run\n", "isn't valid YAML"),
+        ("- name\n", "should be a list of keys"),
+    ],
+)
+def test_a_bad_config_says_what_is_wrong(tmp_path: Path, text: str, said: str) -> None:
+    (tmp_path / "survey.yaml").write_text(text, encoding="utf-8")
+    with pytest.raises(SystemExit, match=re.escape(said)):
+        read_config(tmp_path / "survey.yaml")
+
+
+def save_then_stop(target: Path) -> None:
+    with written(target) as tmp:
+        np.save(tmp, np.zeros(3))
+        raise KeyboardInterrupt
+
+
+def test_an_interrupted_write_leaves_no_file(tmp_path: Path) -> None:
+    target = tmp_path / "stamps.npy"
+    with pytest.raises(KeyboardInterrupt):
+        save_then_stop(target)
+    assert list(tmp_path.iterdir()) == []
+    with written(target) as tmp:
+        np.save(tmp, np.ones(3))
+    assert np.load(target).tolist() == [1, 1, 1]
+    assert [p.name for p in tmp_path.iterdir()] == ["stamps.npy"]
+
+
+def test_check_lists_missing_mosaics(tmp_path: Path) -> None:
+    (tmp_path / "a_f277w.fits").touch()
+    cfg = Config(
+        name="t",
+        out=tmp_path / "run",
+        pattern=f"{tmp_path.as_posix()}/{{field}}_{{band}}.fits",
+        device="cpu",
+    )
+    problems = report(cfg)
+    assert [p for p in problems if p.startswith("missing")] == [
+        f"missing {tmp_path / f'a_{b}.fits'}" for b in ("f115w", "f150w", "f444w")
+    ]
 
 
 def fake_run(out: Path, n: int) -> Config:

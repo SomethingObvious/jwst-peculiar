@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -86,7 +87,10 @@ def _ring_median(band: Band, x: Floats, y: Floats) -> Floats:
     a = np.linspace(0, 2 * np.pi, 24, endpoint=False)
     rx, ry = x[:, None] + r * np.cos(a), y[:, None] + r * np.sin(a)
     v = map_coordinates(band.data, [ry.ravel(), rx.ravel()], order=1, cval=np.nan)
-    return np.asarray(np.nanmedian(v.reshape(rx.shape), axis=1), float)
+    with warnings.catch_warnings():
+        # a ring wholly off the data is NaN, and NaN passes no peak test
+        warnings.simplefilter("ignore", RuntimeWarning)
+        return np.asarray(np.nanmedian(v.reshape(rx.shape), axis=1), float)
 
 
 def _peaks(band: Band) -> tuple[Floats, Floats, Floats]:

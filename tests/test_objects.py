@@ -43,6 +43,7 @@ from jwst_peculiar.config import EMPTY, Config, read_config, written
 from jwst_peculiar.cut import (
     Band,
     N,
+    NoData,
     detect,
     fitting_workers,
     gaia_stars,
@@ -980,6 +981,16 @@ def test_a_second_viewer_moves_to_a_free_port(listed: Config) -> None:
         second.server_close()
     finally:
         first.server_close()
+
+
+def test_a_band_with_no_data_has_no_sources() -> None:
+    nan = np.full((300, 300), np.nan, np.float32)
+    with pytest.raises(NoData):
+        detect(Band(nan, nan, nan, None, 0.04, None))
+    some = nan.copy()
+    some[:3, :3] = 0.1
+    with pytest.raises(NoData):
+        detect(Band(some, some, np.ones_like(some), None, 0.04, None))
 
 
 def half_blank(tmp_path: Path) -> Config:

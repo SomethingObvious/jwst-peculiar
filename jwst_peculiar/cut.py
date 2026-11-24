@@ -26,7 +26,7 @@ import warnings
 
 from astropy.convolution import Gaussian2DKernel, convolve
 from astropy.io import fits
-from astropy.utils.exceptions import AstropyUserWarning
+from astropy.utils.exceptions import AstropyWarning
 import numpy as np
 import pandas as pd
 import photutils
@@ -121,7 +121,7 @@ def wcs_record(wcs: SkyWcs) -> tuple[dict[str, Any], float]:
     Returns:
         The cards, and arcseconds per pixel.
     """
-    cd = np.diag(wcs.wcs.cdelt) @ wcs.wcs.get_pc()
+    cd = wcs.pixel_scale_matrix
     record = {
         "CTYPE1": wcs.wcs.ctype[0],
         "CTYPE2": wcs.wcs.ctype[1],
@@ -224,19 +224,23 @@ def detect(band: Band) -> tuple[pd.DataFrame, npt.NDArray[np.int32]]:
         NoData: When the band has no sources at all.
     """
     off = np.isnan(band.data)
+    if off.all():
+        msg = "The detect band has no data here."
+        raise NoData(msg)
     det = np.nan_to_num(band.data)
     with warnings.catch_warnings():
-        # the uncovered area stays NaN after smoothing, and `off` masks it anyway
-        warnings.simplefilter("ignore", AstropyUserWarning)
+        # Each says something handled here: the NaN left where nothing was observed,
+        # which `off` masks, finding nothing, and a deblend falling back to linear.
+        warnings.simplefilter("ignore", AstropyWarning)
         smooth = convolve(
             det, Gaussian2DKernel(2 / 2.355), mask=off, normalize_kernel=True
         )
-    seg = detect_sources(smooth, 1.5 * band.rms, 10, mask=off)
-    if seg is None:
-        msg = "Found no sources at all in this field. Is the detect band right?"
-        raise NoData(msg)
-    parent = seg.data.copy()
-    seg = deblend_sources(smooth, seg, 10, n_levels=32, contrast=0.005, **QUIET)
+        seg = detect_sources(smooth, 1.5 * band.rms, 10, mask=off)
+        if seg is None:
+            msg = "Found no sources at all in this field. Is the detect band right?"
+            raise NoData(msg)
+        parent = seg.data.copy()
+        seg = deblend_sources(smooth, seg, 10, n_levels=32, contrast=0.005, **QUIET)
     cat = SourceCatalog(det, seg, convolved_data=smooth, error=band.rms, mask=off)
     cols = ["label", "x_centroid", "y_centroid", "area", "semimajor_axis"]
     cols += ["semiminor_axis", "segment_flux", "segment_flux_err", "max_value"]

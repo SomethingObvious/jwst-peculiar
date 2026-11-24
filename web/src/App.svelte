@@ -121,7 +121,7 @@
       }
       // The file comes from outside, so its shape is checked rather than trusted.
       if (!Array.isArray(b.tiles) || b.tiles.length === 0) {
-        throw new Error('index.json lists no tiles');
+        throw new Error('index.json lists no objects');
       }
       wcs = new Map(Object.entries(b.mosaics).map(([k, m]) => [k, tanOf(m.wcs)]));
       const v = new Verdicts(b, base);
@@ -798,8 +798,8 @@
         <dd>This sheet</dd>
       </dl>
       <p class="dim">
-        A verdict moves to the next tile unless you turn that off in the Verdict block.
-        Drag the plate to pan, scroll or pinch to zoom and double-click to fit.
+        A verdict moves to the next object unless you turn that off in the Verdict
+        block. Drag the plate to pan, scroll or pinch to zoom and double-click to fit.
       </p>
     </dialog>
   </div>

@@ -223,7 +223,12 @@ class Config:
             if split_tile(name)[1] is not None:
                 out.append(name)
                 continue
-            h = self._header(name, self.detect)
+            try:
+                h = self._header(name, self.detect)
+            except OSError:
+                # check names it as missing or cut short, and cut as a field that failed
+                out.append(name)
+                continue
             rows = math.ceil(int(h["NAXIS2"]) / self.tile)
             cols = math.ceil(int(h["NAXIS1"]) / self.tile)
             out += [

@@ -84,7 +84,7 @@ def load(cfg: Config, encoder: str = "nano") -> Objects:
         if not (folder / name).exists():
             msg = f"{field} has no {name}. Run jwst-peculiar embed first."
             raise SystemExit(msg)
-        cat = pd.read_csv(folder / "objects.csv")
+        cat = pd.read_csv(folder / "objects.csv", dtype={"field": str})
         # a tile with no objects reads back untyped, which would turn every column
         # into Python objects
         if len(cat):
@@ -106,7 +106,7 @@ class Sky:
         self.xy = np.c_[t.ra.to_numpy() * cos * 3600, t.dec.to_numpy() * 3600]
         self.half = t.half.to_numpy()
         self.tree = cKDTree(self.xy)
-        self.reach = float(self.half.max())
+        self.reach = float(self.half.max(initial=0))
 
     def near(self, i: int) -> list[int]:
         """Return the objects closer to `i` than the larger of their two half-widths."""
@@ -148,10 +148,10 @@ def rarity(
         One value per row.
     """
     others = e if ref is None else np.concatenate([e, ref])
-    # a block of similarities stays near 200 MB however big the reference is
-    block = max(16, min(block, 50_000_000 // len(others)))
     if len(others) <= 1:
         return np.ones(len(e))
+    # a block of similarities stays near 200 MB however big the reference is
+    block = max(16, min(block, 50_000_000 // len(others)))
     # a run of a handful of objects makes do with the farthest neighbour it has
     k = min(K, len(others) - 1)
     out = np.empty(len(e))
@@ -200,8 +200,9 @@ def reference(obj: Objects, other: Objects) -> npt.NDArray[np.float32]:
     pool = other.t.loc[other.pool]
     cos = np.cos(np.radians(float(obj.t.dec.median())))
     xy = np.c_[pool.ra.to_numpy() * cos * 3600, pool.dec.to_numpy() * 3600]
-    d, _ = sky.tree.query(xy, distance_upper_bound=sky.reach)
-    away = d > np.maximum(pool.half.to_numpy(), sky.reach)
+    half = np.maximum(pool.half.to_numpy(), sky.reach)
+    d, _ = sky.tree.query(xy, distance_upper_bound=float(half.max(initial=0)))
+    away = d > half
     return np.asarray(other.e[other.pool][away], np.float32)
 
 

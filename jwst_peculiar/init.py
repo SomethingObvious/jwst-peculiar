@@ -37,8 +37,8 @@ AUXILIARY = re.compile(
 
 
 def _microns(band: str) -> float:
-    digits = re.sub(r"\D", "", band)
-    return int(digits) / 100
+    # the digits after the f, as the 2 of a wide filter like F150W2 isn't part of them
+    return int(re.sub(r"\D.*", "", band[1:])) / 100
 
 
 def split_name(name: str) -> tuple[str, str, str] | None:

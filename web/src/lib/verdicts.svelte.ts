@@ -202,7 +202,7 @@ export class Verdicts {
         const all = (await res.json()) as Record<string, Incoming>;
         for (const [k, v] of Object.entries(all)) {
           this.map.set(k, {
-            verdict: (v.verdict ?? null) as Verdict | null,
+            verdict: isVerdict(v.verdict) ? v.verdict : null,
             star: Boolean(v.star),
             note: v.note ?? '',
             updated: v.updated ?? '',
@@ -270,10 +270,7 @@ export class Verdicts {
     return n;
   }
 
-  update(
-    key: string,
-    change: Partial<Pick<VerdictRecord, 'verdict' | 'star' | 'note'>>,
-  ) {
+  update(key: string, change: Change) {
     const prev = this.map.get(key) ?? {
       verdict: null,
       star: false,
@@ -404,7 +401,8 @@ export class Verdicts {
   }
 
   toCsv(bundle: Bundle): string {
-    const esc = (s: string) => (/[",\n]/u.test(s) ? `"${s.replace(/"/gu, '""')}"` : s);
+    const esc = (s: string) =>
+      /[",\n\r]/u.test(s) ? `"${s.replace(/"/gu, '""')}"` : s;
     // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a throwaway lookup for one export
     const byKey = new Map(bundle.tiles.map((t) => [t.key, t]));
     const rows = ['key,rank,mosaic,ra,dec,score,verdict,star,note,updated'];

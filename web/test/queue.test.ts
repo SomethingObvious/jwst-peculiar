@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Verdicts } from '../src/lib/verdicts.svelte';
+import { readImport, Verdicts } from '../src/lib/verdicts.svelte';
 import type { Bundle } from '../src/lib/types';
 
 const PENDING = 'jwst-peculiar:pending:r';
@@ -142,6 +142,26 @@ describe('verdicts kept in the browser', () => {
       'z.png',
       'b.png',
     ]);
+  });
+
+  it('exports a lone carriage return so Import reads it back', async () => {
+    const v = new Verdicts(bundle(false), '');
+    await v.load();
+    const note = 'one\rtwo';
+    v.update('a.png', { verdict: 'known', note });
+    const { changes } = readImport(v.toCsv(bundle(false)), new Set(['a.png']));
+    expect(changes).toEqual([['a.png', { verdict: 'known', star: false, note }]]);
+  });
+
+  it('loads a verdict it does not know as none', async () => {
+    vi.stubGlobal('fetch', () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ 'a.png': { verdict: 'odd', star: true } })),
+      ),
+    );
+    const v = new Verdicts(bundle(true), '');
+    await v.load();
+    expect(v.get('a.png')).toMatchObject({ verdict: null, star: true });
   });
 
   it('keeps what another tab saved before its event arrived', async () => {

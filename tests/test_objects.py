@@ -25,7 +25,7 @@ from sklearn.linear_model import LogisticRegression
 import torch
 import yaml
 
-from jwst_peculiar import cut, server
+from jwst_peculiar import compact, cut, server
 from jwst_peculiar.check import report
 from jwst_peculiar.cli import main, run
 from jwst_peculiar.compact import (
@@ -194,6 +194,8 @@ def test_rarity_ignores_neighbours_that_share_its_sky() -> None:
     rar = rarity(e, Sky(t))
     assert rar[0] == pytest.approx(0.5, abs=1e-6)
     assert rar[1] == pytest.approx(0.0, abs=1e-6)
+    # every object flagged leaves nothing to compare
+    assert len(rarity(e[:0], Sky(t.iloc[:0]))) == 0
 
 
 def test_a_reference_run_supplies_neighbours_from_elsewhere() -> None:
@@ -206,6 +208,9 @@ def test_a_reference_run_supplies_neighbours_from_elsewhere() -> None:
     other = Objects(there, np.array([u] + [w] * 5, np.float32))
     ref = reference(here, other)
     assert ref.tolist() == [w.tolist()] * 5
+    # 3" away is on this run's sky for a reference object with a 5" stamp
+    there.loc[0, ["ra", "half"]] = [offsets([3], [0]).ra[0], 5.0]
+    assert len(reference(here, other)) == 5
     alone = rarity(here.e, Sky(here.t))
     with_ref = rarity(here.e, Sky(here.t), ref=ref)
     assert alone[1] == pytest.approx(1.0, abs=1e-6)
@@ -308,10 +313,11 @@ def test_check_lists_missing_mosaics(tmp_path: Path) -> None:
         pattern=f"{tmp_path.as_posix()}/{{field}}_{{band}}.fits",
         device="cpu",
     )
-    problems = report(cfg)
-    assert [p for p in problems if p.startswith("missing")] == [
-        f"missing {tmp_path / f'a_{b}.fits'}" for b in ("f115w", "f150w", "f444w")
-    ]
+    want = [f"missing {tmp_path / f'a_{b}.fits'}" for b in ("f115w", "f150w", "f444w")]
+    assert [p for p in report(cfg) if p.startswith("missing")] == want
+    # with tiles too, though naming them reads the detection band's header
+    tiled = dataclasses.replace(cfg, fields=("a",), tile=1000)
+    assert [p for p in report(tiled) if p.startswith("missing")] == want
 
 
 def fake_run(out: Path, n: int) -> Config:
@@ -328,8 +334,8 @@ def fake_run(out: Path, n: int) -> Config:
     stamps[:, 0] = 255
     np.save(folder / "stamps.npy", stamps)
     cards, scale = wcs_record(band(np.zeros((200, 200), np.float32)).wcs)
-    meta = {"shape": [200, 200], "preview_scale": 1, "filters": ["A", "B", "C"]}
-    meta |= {"wcs": cards, "pixel_scale_arcsec": scale, "header": {}}
+    meta = {"shape": [200, 200], "filters": ["A", "B", "C"]}
+    meta |= {"wcs": cards, "pixel_scale_arcsec": scale}
     (folder / "field.json").write_text(json.dumps(meta), encoding="utf-8")
     return Config(name="test", out=out, pattern="{field}_{band}.fits")
 
@@ -417,6 +423,29 @@ def test_gaia_falls_back_to_a_copy_and_says_the_way_round_if_both_are_down(
     monkeypatch.setattr("jwst_peculiar.cut.GAIA_WAITS", (0, 0))
     with pytest.raises(SystemExit, match="Set gaia: false to skip spikes"):
         gaia_stars(cfg, "b", offsets([0.0], [0.0]))
+
+
+def test_init_sorts_wide_filters_by_their_wavelength(tmp_path: Path) -> None:
+    for b in ("f277w", "f150w2", "f090w"):
+        (tmp_path / f"a_{b}.fits").touch()
+    assert guess(tmp_path)["colour"] == ["f277w", "f150w2", "f090w"]
+
+
+def test_gaia_is_asked_about_a_field_across_ra_0_and_not_the_whole_sky(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked: list[str] = []
+
+    def nothing(q: str, _name: str) -> pd.DataFrame:
+        asked.append(q)
+        return pd.DataFrame(columns=["ra", "dec", "phot_g_mean_mag"])
+
+    monkeypatch.setattr(cut, "_query_gaia", nothing)
+    cfg = Config(name="t", out=tmp_path, pattern="{field}_{band}.fits")
+    gaia_stars(cfg, "a", pd.DataFrame({"ra": [359.99, 0.01], "dec": [0.0, 0.0]}))
+    ra, radius = re.findall(r"CIRCLE\('ICRS', (\S+), \S+, ([\d.]+)\)", asked[0])[0]
+    assert float(ra) % 360 == pytest.approx(0, abs=1e-6)
+    assert float(radius) < 0.1
 
 
 @pytest.mark.parametrize(
@@ -1120,6 +1149,10 @@ def test_a_tile_off_the_mosaic_is_left_out_of_every_step(
     assert len(pd.read_csv(cfg.out / "compact.csv")) == 5
     # a second cut leaves the empty tiles be
     assert cut_main(cfg, ["--workers", "1"]) == 0
+    assert (root / "a~0-0" / "embeddings.npy").is_file()
+    # and a redo drops the embeddings of the stamps it replaces
+    assert cut_main(cfg, ["--workers", "1", "--redo"]) == 0
+    assert not (root / "a~0-0" / "embeddings.npy").exists()
 
 
 def test_one_field_failing_leaves_the_rest_cut(
@@ -1132,10 +1165,13 @@ def test_one_field_failing_leaves_the_rest_cut(
         if name == "a~0-1":
             msg = "broken"
             raise ValueError(msg)
+        if name == "a~1-0":
+            msg = "Couldn't query Gaia"
+            raise SystemExit(msg)
         return f"{name}: cut"
 
     monkeypatch.setattr(cut, "cut_field", cut_or_fail)
-    with pytest.raises(SystemExit, match="a~0-1: broken"):
+    with pytest.raises(SystemExit, match=r"a~0-1: broken\na~1-0: Couldn't query Gaia"):
         cut_main(cfg, ["--workers", "1"])
     assert "a~1-1: cut" in capsys.readouterr().out
 
@@ -1267,6 +1303,22 @@ def test_view_exports_a_named_site_and_wants_a_list_first(
     assert (site / "sitemap.xml").is_file()
     with Image.open(site / "social.png") as card:
         assert card.size == (1200, 630)
+
+
+def test_a_list_with_nothing_unflagged_is_empty() -> None:
+    t = offsets([0.0], [0.0]).assign(id="a:1", field="a", label=1, sn=9.0, flag_x=True)
+    t["a_arcsec"] = 0.1
+    assert compact.ranked(t, 5).empty
+
+
+def test_fields_named_with_digits_keep_their_leading_zero(tmp_path: Path) -> None:
+    cfg = fake_run(tmp_path, 3)
+    (tmp_path / "fields" / "a").rename(tmp_path / "fields" / "01")
+    t = pd.read_csv(tmp_path / "fields" / "01" / "objects.csv").assign(field="01")
+    t.to_csv(tmp_path / "fields" / "01" / "objects.csv", index=False)
+    assert rank_main(cfg, ["-n", "3"]) == 0
+    listed = ObjectBundle(cfg, tmp_path / "rank.csv", writable=False)
+    assert {e["key"].split(":")[0] for e in listed.index["tiles"]} == {"01"}
 
 
 def test_cutting_in_parallel_gives_what_one_at_a_time_does(tmp_path: Path) -> None:

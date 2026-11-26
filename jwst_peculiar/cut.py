@@ -9,8 +9,8 @@ semimajor axis over 0.12" get a 224-pixel colour stamp and the artefact tests in
 `flags`, and the small ones, with F444W's detections that F277W lacks, go to
 `compact`.
 
-Each field is held in memory whole, so a mosaic far bigger than about 15,000
-pixels across wants splitting into fields first.
+Each field is held in memory whole, so a mosaic too big for that is cut in
+tiles, which `init` sets up and `check` sizes.
 """
 
 from __future__ import annotations
@@ -66,13 +66,22 @@ if TYPE_CHECKING:
     Bools = npt.NDArray[np.bool_]
 
 # photutils 3.1 deprecates progress_bar, and before that a bar shows without it
-NEW_PHOTUTILS = tuple(map(int, photutils.__version__.split(".")[:2])) >= (3, 1)
-QUIET: dict[str, Any] = {} if NEW_PHOTUTILS else {"progress_bar": False}
+QUIET: dict[str, Any] = (
+    {}
+    if tuple(map(int, photutils.__version__.split(".")[:2])) >= (3, 1)
+    else {"progress_bar": False}
+)
 
+# stamps are N pixels across, covering 3.5 semimajor axes and at least 0.6" each side
 N = 224
-MIN_HALF, SIZE, Q = 0.6, 3.5, 8.0
+MIN_HALF, HALF_PER_A = 0.6, 3.5
+# how hard the asinh compresses a stamp's bright end
+STRETCH = 8.0
 MIN_AREA, MIN_SN, MIN_A = 60, 40.0, 0.12
+# a stamp more than 5% blank is dropped, and a centre under 0.6 of the brightest
+# pixel is outshone
 MAX_ZEROS, OUTSHONE = 0.05, 0.6
+# aperture radii in arcsec
 RADII = (0.1, 0.25)
 NJY_PER_MJY_SR_ARCSEC2 = 2.350443e-11 * 1e15
 FINE = grid(N)
@@ -352,7 +361,8 @@ def render(rgb: Floats) -> npt.NDArray[np.uint8]:
     rgb = rgb - np.nanmedian(rgb[:, edge], axis=1)[:, None, None]
     total = np.clip(rgb.mean(axis=0), 0, None)
     ref = max(float(np.percentile(total, 99.7)), 1e-12)
-    gain = np.arcsinh(Q * total / ref) / np.arcsinh(Q) / np.maximum(total, 1e-12)
+    gain = np.arcsinh(STRETCH * total / ref) / np.arcsinh(STRETCH)
+    gain /= np.maximum(total, 1e-12)
     out = np.clip(rgb * gain, 0, None)
     out /= np.maximum(out.max(axis=0), 1.0)
     return np.asarray(np.rint(255 * out).transpose(1, 2, 0), np.uint8)
@@ -374,7 +384,7 @@ def _rgb(colour: list[Band], centre: tuple[float, float], h: float) -> Floats:
     return np.stack([red, own, blue]).astype(float)
 
 
-def stamps(t: pd.DataFrame, colour: list[Band]) -> tuple[Any, Bools]:
+def stamps(t: pd.DataFrame, colour: list[Band]) -> tuple[npt.NDArray[np.uint8], Bools]:
     """Cut one colour stamp per object on the middle band's pixel grid.
 
     Returns:
@@ -469,7 +479,9 @@ def _cone(t: pd.DataFrame) -> str:
     # Every copy of Gaia indexes a cone, while a range of RA scans the whole table.
     # Its 0.075 deg margin takes in all of a box 0.05 deg past the sources, corners too.
     ra, dec = t.ra.to_numpy(float), t.dec.to_numpy(float)
-    ra0, dec0 = (ra.min() + ra.max()) / 2, (dec.min() + dec.max()) / 2
+    # measured from the first source, so a field across RA 0 stays one piece
+    ra = ra[0] + (ra - ra[0] + 180) % 360 - 180
+    ra0, dec0 = ((ra.min() + ra.max()) / 2) % 360, (dec.min() + dec.max()) / 2
     half = np.ptp(ra) / 2 * np.cos(np.radians(dec0)), np.ptp(dec) / 2
     return f"CIRCLE('ICRS', {ra0}, {dec0}, {float(np.hypot(*half)) + 0.075})"
 
@@ -486,11 +498,9 @@ def describe(out: Path, band: Band, filters: tuple[str, ...]) -> None:
     cards, scale = wcs_record(band.wcs)
     meta = {
         "shape": [h, w],
-        "preview_scale": len(xs) / w,
         "filters": [f.upper() for f in filters],
         "wcs": cards,
         "pixel_scale_arcsec": scale,
-        "header": {"BUNIT": "MJy/sr"},
     }
     (out / "field.json").write_text(json.dumps(meta), encoding="utf-8")
 
@@ -523,7 +533,7 @@ def measure(cfg: Config, name: str) -> Measured:
     """Detect every segment in a field or tile and measure it in every band.
 
     Returns:
-        The segments, their map, the bands, and each band's noise factors for the log.
+        The segments and everything they were found and measured with.
 
     Raises:
         NoData: When the field or tile has no sources of its own.
@@ -586,7 +596,7 @@ def cut_objects(
     seg, bands = m.seg, m.bands
     big = (seg.area >= MIN_AREA) & (seg.sn > MIN_SN) & (seg.a_arcsec > MIN_A)
     t = seg.loc[big.to_numpy()].reset_index(drop=True)
-    t["half"] = np.maximum(MIN_HALF, SIZE * t.a_arcsec)
+    t["half"] = np.maximum(MIN_HALF, HALF_PER_A * t.a_arcsec)
     cut, ok = stamps(t, [bands[b] for b in cfg.colour])
     t, cut = t.loc[ok].reset_index(drop=True), cut[ok]
     # Gaia covers where the objects are, or every segment when none has a stamp
@@ -598,6 +608,9 @@ def cut_objects(
     t.to_csv(out / "objects.csv", index=False)
     (out / "noise.json").write_text(json.dumps(m.noise), encoding="utf-8")
     describe(out, bands[cfg.colour[1]], cfg.colour)
+    # embeddings of the stamps these replace would be paired with the wrong objects
+    for old in out.glob("embeddings*.npy"):
+        old.unlink()
     # last, as a field with stamps.npy counts as cut
     with written(out / "stamps.npy") as tmp:
         np.save(tmp, cut)
@@ -608,7 +621,10 @@ def cut_compact(
     cfg: Config, name: str, m: Measured, *, objects: pd.DataFrame, lone: pd.DataFrame
 ) -> pd.DataFrame:
     """Flag and write one field's compact candidates."""
-    small = pd.concat([m.seg, red_only(cfg, name, m)], ignore_index=True)
+    try:
+        small = pd.concat([m.seg, red_only(cfg, name, m)], ignore_index=True)
+    except NoData:
+        small = m.seg
     small = small.loc[compact.is_candidate(small)].reset_index(drop=True)
     gaia = gaia_stars(cfg, name, objects if len(objects) else m.seg)
     compact.compact_flags(
@@ -650,7 +666,7 @@ def cut_field(cfg: Config, name: str, *, redo: bool = False) -> str:
     if redo or not (out / "stamps.npy").exists():
         t = cut_objects(cfg, name, m, lone=lone)
     else:
-        t = pd.read_csv(out / "objects.csv")
+        t = pd.read_csv(out / "objects.csv", dtype={"field": str})
     said = f"{name}: {len(m.seg)} segments, {len(t)} with stamps"
     said += f", {_unflagged(t)} unflagged"
     if not compact.has_bands(cfg):
@@ -711,6 +727,8 @@ def main(cfg: Config, argv: list[str]) -> int:
     def said(name: str, job: Callable[[], str]) -> None:
         try:
             print(job(), flush=True)
+        except SystemExit as err:
+            failed.append(f"{name}: {err}")
         except Exception as err:  # noqa: BLE001 it's printed whole and named at the end
             traceback.print_exception(err)
             failed.append(f"{name}: {err}")

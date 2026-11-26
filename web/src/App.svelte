@@ -7,6 +7,7 @@
   import { TileCache } from './lib/cache';
   import type { TileData } from './lib/tiles';
   import {
+    THEMES,
     VERDICTS,
     type Bundle,
     type Filters,
@@ -41,7 +42,7 @@
   let wcs = new Map<string, Tan | null>();
 
   let theme = $state<Theme>(
-    saved.theme && ['atlas', 'plate', 'classic'].includes(saved.theme)
+    saved.theme && THEMES.some((t) => t.toLowerCase() === saved.theme)
       ? saved.theme
       : 'atlas',
   );
@@ -334,10 +335,6 @@
     verdicts.update(key, { star: !verdicts.get(key)?.star });
   }
 
-  function setTheme(t: Theme) {
-    theme = t;
-  }
-
   function jump() {
     if (!bundle || goto === null) {
       return;
@@ -527,21 +524,12 @@
 
     {#if narrow}
       <nav class="tabs" aria-label="Panels">
-        <button
-          class="ctl"
-          aria-pressed={tab === 'index'}
-          onclick={() => (tab = 'index')}>Index</button
-        >
-        <button
-          class="ctl"
-          aria-pressed={tab === 'plate'}
-          onclick={() => (tab = 'plate')}>Plate</button
-        >
-        <button
-          class="ctl"
-          aria-pressed={tab === 'readout'}
-          onclick={() => (tab = 'readout')}>Readout</button
-        >
+        {#each ['Index', 'Plate', 'Readout'] as const as label (label)}
+          {@const t = label.toLowerCase() as typeof tab}
+          <button class="ctl" aria-pressed={tab === t} onclick={() => (tab = t)}
+            >{label}</button
+          >
+        {/each}
       </nav>
     {/if}
 
@@ -686,27 +674,14 @@
         {/if}
       </span>
       <span class="themes" role="group" aria-label="Theme">
-        <button
-          class="ctl mini"
-          aria-pressed={theme === 'atlas'}
-          onclick={() => {
-            setTheme('atlas');
-          }}>Atlas</button
-        >
-        <button
-          class="ctl mini"
-          aria-pressed={theme === 'plate'}
-          onclick={() => {
-            setTheme('plate');
-          }}>Plate</button
-        >
-        <button
-          class="ctl mini"
-          aria-pressed={theme === 'classic'}
-          onclick={() => {
-            setTheme('classic');
-          }}>Classic</button
-        >
+        {#each THEMES as label (label)}
+          {@const t = label.toLowerCase() as Theme}
+          <button
+            class="ctl mini"
+            aria-pressed={theme === t}
+            onclick={() => (theme = t)}>{label}</button
+          >
+        {/each}
       </span>
     </footer>
 

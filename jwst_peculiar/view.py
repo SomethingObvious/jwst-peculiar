@@ -73,7 +73,7 @@ class ObjectBundle:
         """Read the list and every field it draws on."""
         self.run_dir = cfg.out
         self.root = cfg.out / "fields"
-        shown = pd.read_csv(listing)
+        shown = pd.read_csv(listing, dtype={"field": str})
         tile = shown.get("tile", pd.Series(np.nan, index=shown.index))
         small = tile.notna().to_numpy()
         self._compact = (

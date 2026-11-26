@@ -88,6 +88,7 @@ def sky_xy(
         (n, 2) east and north in arcsec.
     """
     cos = np.cos(np.radians(dec0))
+    # RA isn't unwrapped, so a field across RA 0 misses pairs that straddle it
     return np.column_stack([
         np.asarray(ra, float) * cos * 3600,
         np.asarray(dec, float) * 3600,

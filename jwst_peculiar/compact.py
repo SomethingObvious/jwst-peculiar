@@ -78,32 +78,43 @@ if TYPE_CHECKING:
     Bools = npt.NDArray[np.bool_]
 
 BANDS = ("f115w", "f150w", "f277w", "f444w")
+# F444W's own detections get labels past this, clear of the detection band's
 RED, OFFSET = "f444w", 1_000_000
+# what counts as a candidate
 MIN_SN, MAX_A, MAX_AREA = 10.0, 0.12, 60
+# one_band, and the faint red candidate it spares
 PEAK_SN, PEAK_FLOOR, PEAK_SHARE = 10.0, 4.0, 20.0
 NEXT, RED_SEEN, RED_CENTRED = "f277w", 2.0, 0.3
-# F150W's 0.1" over 0.25" flux for a point source, and the flux ratios F150W over
-# F277W and F277W over F444W a star is brighter than (1 and 0.5 magnitudes)
+# blue_star: F150W's 0.1" over 0.25" flux for a point source, and the flux ratios
+# F150W over F277W and F277W over F444W a star is brighter than (1 and 0.5 mag)
 STAR_POINT, STAR_FALL = (0.75, 1.2), (10**0.4, 10**0.2)
-# 99th percentile of 0.1" over 0.25" flux for 742 Gaia stars, G 19 to 21, S/N over 30
+# sharp: the 99th percentile of 0.1" over 0.25" flux for 742 Gaia stars, G 19 to
+# 21, S/N over 30
 PSF_SHARPEST = {"f115w": 0.88, "f150w": 0.865, "f277w": 0.70, "f444w": 0.61}
 SHARP_SIG, SHARP_FLOOR = 3.0, 5.0
-# NIRCam takes F115W with F277W, then F150W with F444W, at the same dither
+# one_pair, as NIRCam takes F115W with F277W, then F150W with F444W, at one dither
 PAIRS = (("f115w", "f277w"), ("f150w", "f444w"))
 SEEN, UNSEEN = 5.0, 2.0
+# dark_middle
 DARK_SEEN, DARK = 3.0, 1.0
+# listed_star, and the 0.3" gaia uses too
 POINT, HALO_REACH, HALO_RATIO = 0.3, 2.0, 20.0
-# 97% of COSMOS-Web's 911 listed stars over S/N 100 pass, and 213 unlisted sources
+# a segment concentrated like a star, which 97% of COSMOS-Web's 911 listed stars
+# over S/N 100 pass, and 213 unlisted sources
 POINT_SN, POINT_F150W, POINT_F277W = 100.0, 0.75, (0.5, 0.8)
+# pixel
 NEG_SIG, APERTURE, BLOCK = 5.0, 0.25, 1.5
 # the bands whose 0.25" flux the ranking reads, and the aperture every band has
 CONCENTRATED, INNER = ("f277w", "f444w"), 0.1
+# edge, in arcsec
 EDGE = 1.0
+# line, where a median of n pixels has 1.2533 times the noise of their mean
 LINE_IN, LINE_OUT, LINE_SIDE = 0.4, 1.5, 0.25
-# a median of n pixels has 1.2533 times the noise of their mean
 LINE_SIG, LINE_SHARE, MEDIAN_NOISE = 4.0, 0.2, 1.2533
+# the ranking
 COMPONENTS, FITS = 20, 3
 LIST, STAMPS = "compact.csv", "compact_stamps.npy"
+# each listed candidate's stamp, 2.4" across at twice 112 pixels
 TILE, CUTOUT = 112, 2.4
 
 
@@ -535,7 +546,7 @@ def load(cfg: Config) -> pd.DataFrame:
         if not path.exists():
             msg = f"{name} has no {LIST}. Run jwst-peculiar cut first."
             raise SystemExit(msg)
-        cat = pd.read_csv(path)
+        cat = pd.read_csv(path, dtype={"field": str})
         # an empty one reads back untyped, as in rank.load
         if len(cat):
             cats.append(cat)
@@ -583,8 +594,10 @@ def ranked(t: pd.DataFrame, n: int) -> pd.DataFrame:
     """
     flagged = t.filter(like="flag_").to_numpy().any(axis=1)
     keep = t.loc[~flagged].reset_index(drop=True)
-    x, xe = features(keep)
-    keep["score"] = np.mean([rarity(fit(x, s), x, xe) for s in range(FITS)], axis=0)
+    keep["score"] = 0.0
+    if len(keep):
+        x, xe = features(keep)
+        keep["score"] = np.mean([rarity(fit(x, s), x, xe) for s in range(FITS)], axis=0)
     cols = ["id", "field", "label", "ra", "dec", "sn", "a_arcsec", "score"]
     best = keep.sort_values("score", ascending=False).head(n)[cols]
     k = len(best)

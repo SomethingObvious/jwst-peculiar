@@ -10,12 +10,10 @@ export interface RunInfo {
 export interface MosaicInfo {
   shape: [number, number];
   preview: string;
-  preview_scale: number;
   filters: string[];
   pixel_scale_arcsec: number;
   /** Left out when the mosaic's header has no celestial WCS. */
   wcs?: WcsCards;
-  header: Record<string, string>;
 }
 
 export interface TileInfo {
@@ -55,7 +53,8 @@ export const VERDICTS: { id: Verdict; label: string; key: string }[] = [
   { id: 'not_anomalous', label: 'Not Anomalous', key: '4' },
 ];
 
-export type Theme = 'atlas' | 'plate' | 'classic';
+export const THEMES = ['Atlas', 'Plate', 'Classic'] as const;
+export type Theme = Lowercase<(typeof THEMES)[number]>;
 
 export type VerdictFilter =
   | 'all'

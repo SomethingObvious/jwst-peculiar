@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, unquote
 
 from astropy.io import fits
+from astropy.utils.exceptions import AstropyUserWarning
 from astropy.wcs import WCS
 import numpy as np
 import pandas as pd
@@ -22,6 +23,7 @@ from PIL import Image
 import pytest
 from sklearn.linear_model import LogisticRegression
 import torch
+import yaml
 
 from jwst_peculiar import cut, server
 from jwst_peculiar.check import report
@@ -31,10 +33,12 @@ from jwst_peculiar.compact import (
     bad_pixel,
     blue_star,
     dark_middle,
+    listed_star,
     near_edge,
     on_line,
     one_band,
     one_pair,
+    piece,
     sharp,
 )
 from jwst_peculiar.compact import (
@@ -56,15 +60,18 @@ from jwst_peculiar.cut import (
 from jwst_peculiar.cut import (
     main as cut_main,
 )
-from jwst_peculiar.embed import embed
+from jwst_peculiar.embed import embed, load_encoder, resolve_device
+from jwst_peculiar.embed import main as embed_main
 from jwst_peculiar.flags import blobs, merged, on_spikes
 from jwst_peculiar.init import guess, split_name
+from jwst_peculiar.init import main as init_main
 from jwst_peculiar.rank import (
     CLASSES,
     MODEL,
     Objects,
     Sky,
     label_main,
+    like_main,
     p_worth,
     rank_main,
     rarity,
@@ -73,6 +80,7 @@ from jwst_peculiar.rank import (
 from jwst_peculiar.server import make_handler, open_server
 from jwst_peculiar.verdicts import read_verdicts, save_verdict
 from jwst_peculiar.view import ObjectBundle, add_site_meta, export, lit_span
+from jwst_peculiar.view import main as view_main
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -552,7 +560,8 @@ def test_check_spots_a_mosaic_whose_download_stopped_early(tmp_path: Path) -> No
         pattern=f"{tmp_path.as_posix()}/{{field}}_{{band}}.fits",
         device="cpu",
     )
-    said = [p for p in report(cfg) if "stopped early" in p]
+    with pytest.warns(AstropyUserWarning, match="truncated"):
+        said = [p for p in report(cfg) if "stopped early" in p]
     assert said == [
         f"{short} is cut short or empty, so its download probably stopped early"
     ]
@@ -1117,3 +1126,176 @@ def test_one_field_failing_leaves_the_rest_cut(
     with pytest.raises(SystemExit, match="a~0-1: broken"):
         cut_main(cfg, ["--workers", "1"])
     assert "a~1-1: cut" in capsys.readouterr().out
+
+
+def test_like_takes_seeds_by_id_or_position(tmp_path: Path) -> None:
+    cfg = fake_run(tmp_path, 30)
+    t = pd.read_csv(tmp_path / "fields" / "a" / "objects.csv")
+    at = f"{t.ra.iloc[6]},{t.dec.iloc[6]}"
+    assert like_main(cfg, ["a:3", at, "-n", "5"]) == 0
+    like = pd.read_csv(tmp_path / "like.csv")
+    assert len(like) == 5
+    assert not {"a:3", "a:7"} & set(like.id)
+    with pytest.raises(SystemExit, match="No object in the run matches"):
+        like_main(cfg, ["a:999"])
+
+
+def test_a_sample_skips_the_top_and_whatever_has_a_verdict(tmp_path: Path) -> None:
+    cfg = fake_run(tmp_path, 160)
+    assert rank_main(cfg, ["-n", "160", "--image-only"]) == 0
+    order = pd.read_csv(tmp_path / "rank.csv")
+    judged = str(order.id.iloc[120])
+    save_verdict(tmp_path, judged, "artifact", False, "")
+    assert rank_main(cfg, ["--sample", "-n", "20", "--image-only"]) == 0
+    sample = pd.read_csv(tmp_path / "sample.csv")
+    assert len(sample) == 20
+    assert (sample["rank"] > 100).all()
+    assert judged not in set(sample.id)
+
+
+def test_label_wants_five_verdicts_of_each_kind(tmp_path: Path) -> None:
+    cfg = fake_run(tmp_path, 30)
+    save_verdict(tmp_path, "a:1", "artifact", False, "")
+    with pytest.raises(SystemExit, match="at least 5 verdicts of each kind"):
+        label_main(cfg, [])
+
+
+def test_embed_writes_each_field_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = dataclasses.replace(fake_run(tmp_path, 5), device="cpu")
+    target = tmp_path / "fields" / "a" / "embeddings.npy"
+    target.unlink()
+
+    def pool(*_args: object) -> torch.nn.Module:
+        return torch.nn.Sequential(torch.nn.AdaptiveAvgPool2d(1), torch.nn.Flatten())
+
+    monkeypatch.setattr("jwst_peculiar.embed.load_encoder", pool)
+    assert embed_main(cfg, []) == 0
+    assert np.load(target).shape == (5, 3)
+    np.save(target, np.zeros((5, 3), np.float32))
+    assert embed_main(cfg, []) == 0
+    assert not np.load(target).any()
+    assert embed_main(cfg, ["--redo"]) == 0
+    assert np.load(target).any()
+
+
+def test_a_device_that_is_not_there_fails_early(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+    assert resolve_device("auto") == torch.device("cpu")
+    for spec in ("cuda", "mps"):
+        with pytest.raises(RuntimeError, match="asks for"):
+            resolve_device(spec)
+
+
+def test_the_encoder_says_it_needs_the_internet_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def offline(*_args: object, **_kwargs: object) -> torch.nn.Module:
+        raise OSError
+
+    monkeypatch.setattr("timm.create_model", offline)
+    with pytest.raises(SystemExit, match="needs the internet once"):
+        load_encoder("nano", torch.device("cpu"))
+
+
+def test_init_writes_a_config_once_that_finds_its_mosaics(tmp_path: Path) -> None:
+    folder = tmp_path / "data" / "mosaics"
+    folder.mkdir(parents=True)
+    for b in ("f115w", "f150w", "f277w", "f444w"):
+        (folder / f"a1_nircam_clear-{b}_i2d.fits").touch()
+    config = tmp_path / "configs" / "mine.yaml"
+    config.parent.mkdir()
+    assert init_main([str(folder), str(config)]) == 0
+    keys = yaml.safe_load(config.read_text(encoding="utf-8"))
+    assert keys["name"] == "mine"
+    assert keys["out"] == "runs/mine"
+    # the config sits elsewhere, so the pattern names the folder in full
+    assert (
+        keys["pattern"]
+        == f"{folder.resolve().as_posix()}/{{field}}_nircam_clear-{{band}}_i2d.fits"
+    )
+    with pytest.raises(SystemExit, match="already there"):
+        init_main([str(folder), str(config)])
+
+
+def test_a_verdicts_file_that_wont_read_or_save_gets_a_reason(
+    port: int, listed: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (listed.out / "verdicts.csv").write_text(
+        "id,verdict\na:1,artifact\n", encoding="utf-8"
+    )
+    status, body = _ask(port, "GET", "/run/verdicts.json")
+    assert status == 500
+    assert b"Couldn't read run/verdicts.json" in body
+
+    def locked(*_args: object) -> str:
+        raise PermissionError
+
+    monkeypatch.setattr("jwst_peculiar.server.save_verdict", locked)
+    here = f"http://127.0.0.1:{port}"
+    verdict = {"key": "a:3", "verdict": "artifact"}
+    status, body = _ask(port, "POST", "/run/api/verdict", body=verdict, Origin=here)
+    assert status == 500
+    assert b"Couldn't save it" in body
+
+
+def test_view_exports_a_named_site_and_wants_a_list_first(
+    listed: Config, tmp_path: Path
+) -> None:
+    with pytest.raises(SystemExit, match="Run jwst-peculiar rank"):
+        view_main(listed, ["--list", "like.csv"])
+    site = tmp_path / "site"
+    url = "https://example.org/demo"
+    assert (
+        view_main(listed, ["--export", str(site), "--name", "Demo", "--site_url", url])
+        == 0
+    )
+    index = json.loads((site / "run" / "index.json").read_text(encoding="utf-8"))
+    assert index["run"]["name"] == "Demo"
+    page = (site / "index.html").read_text(encoding="utf-8")
+    assert "<title>Demo · jwst-peculiar</title>" in page
+    assert (site / "sitemap.xml").is_file()
+
+
+def test_cutting_in_parallel_gives_what_one_at_a_time_does(tmp_path: Path) -> None:
+    serial = half_blank(tmp_path)
+    parallel = dataclasses.replace(serial, out=tmp_path / "run2")
+    assert cut_main(serial, ["--workers", "1"]) == 0
+    assert cut_main(parallel, ["--workers", "2"]) == 0
+    assert parallel.cut_fields() == serial.cut_fields()
+    for f in serial.cut_fields():
+        for name in ("objects.csv", "segments.csv", "stamps.npy"):
+            one = (serial.out / "fields" / f / name).read_bytes()
+            assert (parallel.out / "fields" / f / name).read_bytes() == one
+
+
+def test_blue_listed_stars_and_bright_halos_are_flagged() -> None:
+    # a blue star too bright for its own halo to matter, a faint red one in that
+    # halo, one well clear of it, a red one too bright for it, and a faint red one
+    # by a bright point source Gaia doesn't list
+    t = offsets([0.0, 1.5, 30.0, 0.0, 61.0], [0.0, 0.0, 0.0, 1.5, 0.0]).assign(
+        f_f150w_25=[2.0, 1, 1, 1, 1],
+        f_f444w_25=[1.0, 2, 2, 2, 2],
+        f_f277w_25=[10.0, 1, 1, 10, 1],
+    )
+    stars = offsets([0.1], [0.0])
+    segments = offsets([0.1, 60.0], [0.0, 0.0]).assign(
+        sn=[10.0, 200.0],
+        f_f150w_10=[1.0, 0.8],
+        f_f150w_25=[1.0, 1.0],
+        f_f277w_10=[1.0, 600.0],
+        f_f277w_25=[100.0, 1000.0],
+    )
+    assert listed_star(t, stars, segments).tolist() == [True, True, False, False, True]
+    assert not listed_star(t, stars.iloc[:0], segments.iloc[:0]).any()
+
+
+def test_a_piece_inside_its_parents_stamp_is_flagged() -> None:
+    objects = offsets([0.0], [0.0]).assign(parent=7)
+    t = offsets([0.3, 2.0, 0.1], [0.0, 0.0, 0.0]).assign(parent=[7, 7, 9])
+    assert piece(t, objects).tolist() == [True, False, False]
+    assert not piece(t, objects.iloc[:0]).any()

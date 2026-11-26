@@ -612,5 +612,5 @@ def main(cfg: Config, argv: list[str]) -> int:
     top = ranked(t, a.n)
     np.save(cfg.out / STAMPS, stamps(cfg, top))
     top.to_csv(cfg.out / LIST, index=False)
-    print(f"{len(t)} compact candidates, list in {cfg.out / LIST}")  # noqa: T201 the command's result
+    print(f"{len(t)} compact candidates, list in {cfg.out / LIST}")
     return 0

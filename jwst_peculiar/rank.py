@@ -239,11 +239,7 @@ def ranked(cfg: Config, obj: Objects, score: Floats, *, n: int) -> list[int]:
 
 
 def write_list(cfg: Config, obj: Objects, score: Floats, *, n: int) -> Path:
-    """Write the top `n` systems by `score` to rank.csv.
-
-    Returns:
-        The file written.
-    """
+    """Write the top `n` systems by `score` to rank.csv."""
     top = ranked(cfg, obj, score, n=n)
     cols = ["id", "field", "ra", "dec", "half", "sn", "a_arcsec"]
     out = obj.t.iloc[top][cols].assign(rank=range(1, len(top) + 1), score=score[top])
@@ -280,11 +276,7 @@ def write_sample(cfg: Config, obj: Objects, score: Floats, *, n: int) -> Path:
 
 
 def rank_main(cfg: Config, argv: list[str]) -> int:
-    """Write the rarity list, or a random sample to label.
-
-    Returns:
-        0.
-    """
+    """Write the rarity list, or a random sample to label."""
     p = argparse.ArgumentParser(prog="jwst-peculiar rank CONFIG")
     p.add_argument("-n", type=int, default=500, help="how many systems to list")
     p.add_argument(
@@ -305,12 +297,12 @@ def rank_main(cfg: Config, argv: list[str]) -> int:
     ref = None
     if a.reference:
         ref = reference(obj, load(read_config(a.reference)))
-        print(f"{len(ref)} reference objects")  # noqa: T201 the command's progress
+        print(f"{len(ref)} reference objects")
     rar, weighted = scores(cfg, obj, ref)
     use = rar if a.image_only or weighted is None else weighted
     write = write_sample if a.sample else write_list
     path = write(cfg, obj, use, n=a.n)
-    print(f"{len(obj.t)} objects, {int(obj.flagged.sum())} flagged, list in {path}")  # noqa: T201 the command's result
+    print(f"{len(obj.t)} objects, {int(obj.flagged.sum())} flagged, list in {path}")
     return 0
 
 
@@ -335,11 +327,7 @@ def find(obj: Objects, sky: Sky, seed: str) -> int:
 
 
 def like_main(cfg: Config, argv: list[str]) -> int:
-    """Write the objects most like one or more seeds, by mean cosine similarity.
-
-    Returns:
-        0.
-    """
+    """Write the objects most like one or more seeds, by mean cosine similarity."""
     p = argparse.ArgumentParser(prog="jwst-peculiar like CONFIG")
     p.add_argument("seeds", nargs="+", help="FIELD:LABEL ids, or RA,DEC in degrees")
     p.add_argument("-n", type=int, default=100)
@@ -353,7 +341,7 @@ def like_main(cfg: Config, argv: list[str]) -> int:
     cols = ["id", "field", "ra", "dec", "half"]
     path = cfg.out / "like.csv"
     obj.t.iloc[top][cols].assign(similarity=sim[top]).to_csv(path, index=False)
-    print(f"{len(top)} systems like {', '.join(a.seeds)} in {path}")  # noqa: T201 the command's result
+    print(f"{len(top)} systems like {', '.join(a.seeds)} in {path}")
     return 0
 
 
@@ -386,15 +374,11 @@ def label_main(cfg: Config, argv: list[str]) -> int:
     model = fit(obj.e[idx], y)
     np.savez(cfg.out / MODEL, **model)
     kinds = dict(zip(("bad", "ordinary", "worth"), counts.tolist(), strict=True))
-    print(json.dumps({"labels": len(y), **kinds}))  # noqa: T201 the command's result
+    print(json.dumps({"labels": len(y), **kinds}))
     return 0
 
 
 def main(cfg: Config, argv: list[str]) -> int:
-    """Run rank, like or label, named first in `argv`.
-
-    Returns:
-        The step's exit code.
-    """
+    """Run rank, like or label, named first in `argv`."""
     steps = {"rank": rank_main, "like": like_main, "label": label_main}
     return steps[argv[0]](cfg, argv[1:])

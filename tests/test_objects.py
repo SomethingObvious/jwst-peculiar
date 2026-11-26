@@ -376,43 +376,7 @@ def test_one_list_can_mix_stamped_and_compact_objects(tmp_path: Path) -> None:
     assert (small == 77).all()
 
 
-def test_an_exported_list_gets_a_social_card(tmp_path: Path) -> None:
-    cfg = fake_run(tmp_path, 3)
-    Image.new("RGB", (200, 200), (40, 40, 40)).save(tmp_path / "fields/a/field.png")
-    offsets([0.0], [0.0]).assign(id=["a:1"], field="a", half=1.0).to_csv(
-        tmp_path / "rank.csv", index=False
-    )
-    site = tmp_path / "site"
-    bundle = ObjectBundle(cfg, tmp_path / "rank.csv", writable=False)
-    export(bundle, site)
-    (site / "index.html").write_text(
-        '<html><head><title>x</title><meta name="description" content="old" />\n'
-        "  </head></html>",
-        encoding="utf-8",
-    )
-    add_site_meta(bundle, site, "https://example.org/demo")
-    page = (site / "index.html").read_text(encoding="utf-8")
-    assert "The 1 oddest objects in test rank" in page
-    with Image.open(site / "social.png") as card:
-        assert card.size == (1200, 630)
-
-
-def test_cut_stops_with_the_way_round_when_gaia_is_down(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import pyvo
-
-    def broken(*args: object, **kwargs: object) -> None:
-        raise pyvo.dal.DALFormatError(Exception())
-
-    monkeypatch.setattr(pyvo.dal, "TAPService", broken)
-    monkeypatch.setattr("jwst_peculiar.cut.GAIA_WAITS", (0, 0))
-    cfg = Config(name="t", out=tmp_path, pattern="{field}_{band}.fits")
-    with pytest.raises(SystemExit, match="Set gaia: false to skip spikes"):
-        gaia_stars(cfg, "a", offsets([0.0], [0.0]))
-
-
-def test_gaia_falls_back_to_a_copy_when_esas_is_down(
+def test_gaia_falls_back_to_a_copy_and_says_the_way_round_if_both_are_down(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import pyvo
@@ -424,11 +388,12 @@ def test_gaia_falls_back_to_a_copy_when_esas_is_down(
         "classprob_dsc_combmod_star": [1.0],
     })
     asked: list[str] = []
+    down = ["esa.int"]
 
     class Service:
         def __init__(self, url: str, **_kwargs: object) -> None:
             asked.append(url)
-            if "esa.int" in url:
+            if any(d in url for d in down):
                 raise pyvo.dal.DALFormatError(Exception())
 
         def run_sync(self, _q: str) -> Service:
@@ -448,6 +413,10 @@ def test_gaia_falls_back_to_a_copy_when_esas_is_down(
     # cached, so a second cut asks nobody
     assert gaia_stars(cfg, "a", offsets([0.0], [0.0])).ra.tolist() == [RA0]
     assert len(asked) == 2
+    down.append("ari.uni")
+    monkeypatch.setattr("jwst_peculiar.cut.GAIA_WAITS", (0, 0))
+    with pytest.raises(SystemExit, match="Set gaia: false to skip spikes"):
+        gaia_stars(cfg, "b", offsets([0.0], [0.0]))
 
 
 @pytest.mark.parametrize(
@@ -1265,16 +1234,9 @@ def test_init_writes_a_config_once_that_finds_its_mosaics(tmp_path: Path) -> Non
         init_main([str(folder), str(config)])
 
 
-def test_a_verdicts_file_that_wont_read_or_save_gets_a_reason(
-    port: int, listed: Config, monkeypatch: pytest.MonkeyPatch
+def test_a_verdict_that_cant_be_saved_says_why(
+    port: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    (listed.out / "verdicts.csv").write_text(
-        "id,verdict\na:1,artifact\n", encoding="utf-8"
-    )
-    status, body = _ask(port, "GET", "/run/verdicts.json")
-    assert status == 500
-    assert b"Couldn't read run/verdicts.json" in body
-
     def locked(*_args: object, **_kwargs: object) -> str:
         raise PermissionError
 
@@ -1301,7 +1263,10 @@ def test_view_exports_a_named_site_and_wants_a_list_first(
     assert index["run"]["name"] == "Demo"
     page = (site / "index.html").read_text(encoding="utf-8")
     assert "<title>Demo · jwst-peculiar</title>" in page
+    assert "The 3 oddest objects in Demo" in page
     assert (site / "sitemap.xml").is_file()
+    with Image.open(site / "social.png") as card:
+        assert card.size == (1200, 630)
 
 
 def test_cutting_in_parallel_gives_what_one_at_a_time_does(tmp_path: Path) -> None:

@@ -98,11 +98,7 @@ def _step(step: str, config: Path, rest: list[str]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run one step of the object search.
-
-    Returns:
-        The step's exit code.
-    """
+    """Run one step of the object search."""
     # Piped output on Windows uses the ANSI code page, so printing a path with
     # other letters in it would crash. This escapes them the way stderr does.
     if isinstance(sys.stdout, io.TextIOWrapper):

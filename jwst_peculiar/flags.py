@@ -204,11 +204,7 @@ class StampBoxes:
         return n
 
     def uncovered(self, colour: list[Band]) -> Bools:
-        """Say which stamps reach uncovered sky, NaN or exactly 0, in any colour band.
-
-        Returns:
-            One flag per object.
-        """
+        """Say which stamps reach uncovered sky, NaN or exactly 0, in a colour band."""
         out = np.zeros(len(self.t), bool)
         for b in colour:
             cov = (np.isfinite(b.raw) & (b.raw != 0)).astype(np.float32)

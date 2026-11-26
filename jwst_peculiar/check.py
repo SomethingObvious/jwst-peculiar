@@ -53,13 +53,13 @@ def _units(cfg: Config, name: str) -> None:
     units = ", ".join(sorted({str(h.get("BUNIT", "not given")) for h in heads}))
     factors = [to_mjy_sr(h) for h in heads]
     if None in factors:
-        print(  # noqa: T201 the command's report
+        print(
             f"the mosaics' units are {units}, which can't be turned into MJy/sr, so"
             " colours and the f_ and e_ columns are only right if every band has the"
             " same unit and pixel size"
         )
     elif set(factors) != {1.0}:
-        print(  # noqa: T201 the command's report
+        print(
             f"the mosaics are in {units}, so each band is turned into MJy/sr with its"
             " own pixel size"
         )
@@ -98,13 +98,13 @@ def _memory(cfg: Config, names: list[str], gone: set[str]) -> list[str]:
     biggest = max(sizes, key=sizes.__getitem__)
     px = sizes[biggest]
     said = f"biggest field {biggest}, {px / 1e6:.0f} Mpx"
-    print(f"{said}, cut needs about {px * BYTES_PER_PIXEL / 1e9:.1f} GB")  # noqa: T201 the command's report
+    print(f"{said}, cut needs about {px * BYTES_PER_PIXEL / 1e9:.1f} GB")
     problems = _fits_memory(cfg, biggest, px * BYTES_PER_PIXEL)
     _units(cfg, biggest)
     need = sum(sizes.values()) * DISK_PER_PIXEL / 1e9
     cfg.out.mkdir(parents=True, exist_ok=True)
     free = shutil.disk_usage(cfg.out).free / 1e9
-    print(f"the run needs up to about {need:.1f} GB of disk, {free:.0f} GB is free")  # noqa: T201 the command's report
+    print(f"the run needs up to about {need:.1f} GB of disk, {free:.0f} GB is free")
     if need > free:
         problems.append(
             f"the run folder's disk has {free:.1f} GB free, not {need:.1f} GB"
@@ -120,9 +120,9 @@ def report(cfg: Config) -> list[str]:
     """
     names = cfg.field_names()
     missing = cfg.missing()
-    print(f"{len(names)} fields, bands {', '.join(cfg.bands)}")  # noqa: T201 the command's report
+    print(f"{len(names)} fields, bands {', '.join(cfg.bands)}")
     if not has_bands(cfg):
-        print(f"no compact list, as it needs {', '.join(BANDS)}")  # noqa: T201 the command's report
+        print(f"no compact list, as it needs {', '.join(BANDS)}")
     problems = [f"missing {p}" for p in missing[:SHOWN]]
     if len(missing) > SHOWN:
         problems.append(f"and {len(missing) - SHOWN} more missing mosaics")
@@ -135,13 +135,13 @@ def report(cfg: Config) -> list[str]:
     ]
     problems += _memory(cfg, names, gone)
     try:
-        print(f"embed would run on {resolve_device(cfg.device)}")  # noqa: T201 the command's report
+        print(f"embed would run on {resolve_device(cfg.device)}")
     except RuntimeError as err:
         problems.append(str(err))
     state = (
         "downloaded" if _weights_cached() else "not downloaded yet, embed fetches them"
     )
-    print(f"Zoobot weights {state}")  # noqa: T201 the command's report
+    print(f"Zoobot weights {state}")
     try:
         cfg.out.mkdir(parents=True, exist_ok=True)
         probe = cfg.out / ".check"
@@ -161,6 +161,6 @@ def main(cfg: Config, argv: list[str]) -> int:
     argparse.ArgumentParser(prog="jwst-peculiar check CONFIG").parse_args(argv)
     problems = report(cfg)
     for p in problems:
-        print(f"problem: {p}")  # noqa: T201 the command's report
-    print("ready" if not problems else f"{len(problems)} problems")  # noqa: T201 the command's report
+        print(f"problem: {p}")
+    print("ready" if not problems else f"{len(problems)} problems")
     return 1 if problems else 0

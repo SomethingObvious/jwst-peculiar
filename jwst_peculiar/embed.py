@@ -111,11 +111,7 @@ def embed(
 
 
 def main(cfg: Config, argv: list[str]) -> int:
-    """Embed every cut field that has no embeddings yet.
-
-    Returns:
-        0.
-    """
+    """Embed every cut field that has no embeddings yet."""
     p = argparse.ArgumentParser(prog="jwst-peculiar embed CONFIG")
     p.add_argument("--encoder", choices=ENCODERS, default="nano")
     p.add_argument("--redo", action="store_true", help="embed fields already embedded")
@@ -132,5 +128,5 @@ def main(cfg: Config, argv: list[str]) -> int:
             rows = embed(stamps, net, device=device).astype(np.float32)
             with written(target) as tmp:
                 np.save(tmp, rows)
-            print(f"{folder.name}: {len(stamps)} stamps embedded", flush=True)  # noqa: T201 the command's progress
+            print(f"{folder.name}: {len(stamps)} stamps embedded", flush=True)
     return 0

@@ -400,11 +400,7 @@ def stamps(t: pd.DataFrame, colour: list[Band]) -> tuple[Any, Bools]:
 
 
 def outshone(cut: npt.NDArray[np.uint8]) -> Bools:
-    """Say which stamps have a pixel well away from the centre much brighter than it.
-
-    Returns:
-        One flag per stamp.
-    """
+    """Say which stamps have a pixel well away from the centre much brighter than it."""
     out = np.zeros(len(cut), bool)
     c = slice(N * 3 // 8, N * 5 // 8)
     for i, s in enumerate(cut):
@@ -586,11 +582,7 @@ def red_only(cfg: Config, name: str, m: Measured) -> pd.DataFrame:
 def cut_objects(
     cfg: Config, name: str, m: Measured, *, lone: pd.DataFrame
 ) -> pd.DataFrame:
-    """Cut, flag and write one field's stamped objects.
-
-    Returns:
-        The objects.
-    """
+    """Cut, flag and write one field's stamped objects."""
     seg, bands = m.seg, m.bands
     big = (seg.area >= MIN_AREA) & (seg.sn > MIN_SN) & (seg.a_arcsec > MIN_A)
     t = seg.loc[big.to_numpy()].reset_index(drop=True)
@@ -615,11 +607,7 @@ def cut_objects(
 def cut_compact(
     cfg: Config, name: str, m: Measured, *, objects: pd.DataFrame, lone: pd.DataFrame
 ) -> pd.DataFrame:
-    """Flag and write one field's compact candidates.
-
-    Returns:
-        The candidates.
-    """
+    """Flag and write one field's compact candidates."""
     small = pd.concat([m.seg, red_only(cfg, name, m)], ignore_index=True)
     small = small.loc[compact.is_candidate(small)].reset_index(drop=True)
     gaia = gaia_stars(cfg, name, objects if len(objects) else m.seg)
@@ -722,7 +710,7 @@ def main(cfg: Config, argv: list[str]) -> int:
 
     def said(name: str, job: Callable[[], str]) -> None:
         try:
-            print(job(), flush=True)  # noqa: T201 the command's progress
+            print(job(), flush=True)
         except Exception as err:  # noqa: BLE001 it's printed whole and named at the end
             traceback.print_exception(err)
             failed.append(f"{name}: {err}")
@@ -731,7 +719,7 @@ def main(cfg: Config, argv: list[str]) -> int:
         for name in waiting:
             said(name, partial(cut_field, cfg, name, redo=a.redo))
     else:
-        print(f"cutting {len(waiting)} fields, {workers} at a time", flush=True)  # noqa: T201 the command's progress
+        print(f"cutting {len(waiting)} fields, {workers} at a time", flush=True)
         with ProcessPoolExecutor(workers) as pool:
             jobs = {
                 pool.submit(cut_field, cfg, name, redo=a.redo): name for name in waiting

@@ -205,5 +205,5 @@ def main(argv: list[str] | None = None) -> int:
             a.folder.resolve() / str(keys["pattern"]).split("/", 1)[1]
         ).as_posix()
     a.config.write_text(yaml.safe_dump(keys, sort_keys=False), encoding="utf-8")
-    print(f"Wrote {a.config}. Run jwst-peculiar check {a.config} next.")  # noqa: T201 the command's result
+    print(f"Wrote {a.config}. Run jwst-peculiar check {a.config} next.")
     return 0

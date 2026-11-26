@@ -59,11 +59,7 @@ def serve(bundle: ObjectBundle, *, port: int, browser: bool) -> None:
 
 
 def open_server(bundle: ObjectBundle, port: int) -> Server:
-    """Bind the viewer to `port` on localhost, or to a free port if it's taken.
-
-    Returns:
-        The bound server.
-    """
+    """Bind the viewer to `port` on localhost, or to a free port if it's taken."""
     handler = make_handler(bundle)
     try:
         return Server(("127.0.0.1", port), handler)

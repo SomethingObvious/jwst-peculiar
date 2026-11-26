@@ -214,11 +214,7 @@ class Config:
         ]
 
     def field_names(self) -> list[str]:
-        """Return the fields to search, each mosaic or, with `tile`, each tile of one.
-
-        Returns:
-            The names.
-        """
+        """Return each mosaic to search, or each of its tiles with `tile`."""
         names = self.mosaics()
         if not self.tile:
             return names

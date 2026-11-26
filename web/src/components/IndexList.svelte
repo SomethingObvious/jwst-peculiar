@@ -80,11 +80,6 @@
       scroller.scrollTop = top + 2 * ROW - height;
     }
   });
-
-  function num(v: string): number | null {
-    const n = parseFloat(v);
-    return Number.isFinite(n) ? n : null;
-  }
 </script>
 
 <section class="index" aria-label="Ranked Candidates">
@@ -118,59 +113,6 @@
         {/each}
       </select>
     </div>
-    <div class="row2">
-      <span class="range">
-        <span class="label">Score</span>
-        <input
-          class="ctl num"
-          type="number"
-          step="0.01"
-          aria-label="Lowest score"
-          placeholder={scoreRange[0].toFixed(2)}
-          value={filters.scoreMin ?? ''}
-          oninput={(e) => (filters.scoreMin = num(e.currentTarget.value))}
-        />
-        <input
-          class="ctl num"
-          type="number"
-          step="0.01"
-          aria-label="Highest score"
-          placeholder={scoreRange[1].toFixed(2)}
-          value={filters.scoreMax ?? ''}
-          oninput={(e) => (filters.scoreMax = num(e.currentTarget.value))}
-        />
-      </span>
-      <span class="sort">
-        <select class="ctl" bind:value={filters.sort} aria-label="Sort by">
-          <option value="rank">Rank</option>
-          <option value="score">Score</option>
-          <option value="ra">RA</option>
-          <option value="dec">Dec</option>
-        </select>
-        <button
-          class="ctl dir"
-          onclick={() => (filters.desc = !filters.desc)}
-          aria-label={filters.desc
-            ? 'Descending, switch to ascending'
-            : 'Ascending, switch to descending'}
-        >
-          <svg
-            width="10"
-            height="10"
-            viewBox="0 0 10 10"
-            aria-hidden="true"
-            class:flip={filters.desc}
-          >
-            <path
-              d="M2 6.5 L5 3.5 L8 6.5"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.3"
-            />
-          </svg>
-        </button>
-      </span>
-    </div>
     <div class="counts">
       <span><b class="num">{order.length.toLocaleString('en-CA')}</b> shown</span>
       <span><b class="num">{reviewed.toLocaleString('en-CA')}</b> reviewed</span>
@@ -201,8 +143,6 @@
               text: '',
               verdict: 'all',
               mosaic: '',
-              scoreMin: null,
-              scoreMax: null,
             })}>Show Every Object</button
         >
       </div>
@@ -291,43 +231,6 @@
   .row2 > select {
     flex: 1 1 0;
     min-width: 0;
-  }
-  .range {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-  .range .label {
-    color: var(--chalk-3);
-    margin-right: 2px;
-  }
-  .range input {
-    width: 0;
-    flex: 1 1 0;
-    padding: 0 4px;
-    appearance: textfield;
-    -moz-appearance: textfield;
-  }
-  .range input::-webkit-inner-spin-button {
-    display: none;
-  }
-  .sort {
-    display: flex;
-    gap: 4px;
-  }
-  .sort select {
-    width: 96px;
-  }
-  .dir {
-    width: 24px;
-    padding: 0;
-    display: grid;
-    place-items: center;
-  }
-  .dir .flip {
-    transform: rotate(180deg);
   }
   .counts {
     display: flex;

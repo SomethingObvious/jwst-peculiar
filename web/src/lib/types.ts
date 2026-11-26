@@ -57,7 +57,6 @@ export const VERDICTS: { id: Verdict; label: string; key: string }[] = [
 
 export type Theme = 'atlas' | 'plate' | 'classic';
 
-export type SortKey = 'rank' | 'score' | 'ra' | 'dec';
 export type VerdictFilter =
   | 'all'
   | 'unreviewed'
@@ -70,10 +69,6 @@ export interface Filters {
   text: string;
   verdict: VerdictFilter;
   mosaic: string;
-  scoreMin: number | null;
-  scoreMax: number | null;
-  sort: SortKey;
-  desc: boolean;
 }
 
 export function tileId(index: number): string {

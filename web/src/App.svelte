@@ -10,9 +10,7 @@
     VERDICTS,
     type Bundle,
     type Filters,
-    type SortKey,
     type Theme,
-    type TileInfo,
     type Verdict,
     type VerdictRecord,
   } from './lib/types';
@@ -52,10 +50,6 @@
     text: '',
     verdict: 'all',
     mosaic: '',
-    scoreMin: null,
-    scoreMax: null,
-    sort: 'rank',
-    desc: false,
   });
   let current = $state(0);
   const tile = $derived(bundle?.tiles[current]);
@@ -169,16 +163,6 @@
 
   const indexOfKey = $derived(new Map(bundle?.tiles.map((t, i) => [t.key, i]) ?? []));
 
-  function passesFields(t: TileInfo, f: Filters): boolean {
-    if (f.mosaic && t.mosaic !== f.mosaic) {
-      return false;
-    }
-    if (f.scoreMin !== null && (t.score === null || t.score < f.scoreMin)) {
-      return false;
-    }
-    return !(f.scoreMax !== null && (t.score === null || t.score > f.scoreMax));
-  }
-
   function passesReview(
     f: Filters,
     q: string,
@@ -202,19 +186,6 @@
     return !q || text.includes(q) || (v?.note ?? '').toLowerCase().includes(q);
   }
 
-  function sortKey(sort: SortKey, tiles: TileInfo[]): (i: number) => number {
-    switch (sort) {
-      case 'score':
-        return (i) => tiles[i]?.score ?? -Infinity;
-      case 'ra':
-        return (i) => tiles[i]?.ra ?? NaN;
-      case 'dec':
-        return (i) => tiles[i]?.dec ?? NaN;
-      default:
-        return (i) => tiles[i]?.rank ?? NaN;
-    }
-  }
-
   const order = $derived.by(() => {
     if (!bundle || !verdicts) {
       return new Int32Array(0);
@@ -225,7 +196,7 @@
     const tiles = bundle.tiles;
     const map = verdicts.map;
     tiles.forEach((t, i) => {
-      if (!passesFields(t, f)) {
+      if (f.mosaic && t.mosaic !== f.mosaic) {
         return;
       }
       // The verdict is only looked up when a filter needs it.
@@ -237,12 +208,6 @@
       }
       out.push(i);
     });
-    if (f.sort !== 'rank' || f.desc) {
-      const key = sortKey(f.sort, tiles);
-      const rank = (i: number) => tiles[i]?.rank ?? NaN;
-      const dir = f.desc ? -1 : 1;
-      out.sort((a, b) => (key(a) - key(b)) * dir || rank(a) - rank(b));
-    }
     return Int32Array.from(out);
   });
 

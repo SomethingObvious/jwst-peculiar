@@ -179,8 +179,10 @@ def export(bundle: ObjectBundle, out_dir: Path, app_dir: Path | None = None) -> 
             "written. Pick a new folder."
         )
         raise SystemExit(msg)
-    if run_out.exists():
-        shutil.rmtree(run_out)
+    # only the folders an export writes, so a CNAME or the like stays
+    for ours in (run_out, out_dir / "assets"):
+        if ours.exists():
+            shutil.rmtree(ours)
     if app_dir is not None:
         shutil.copytree(app_dir, out_dir, dirs_exist_ok=True)
     bundle.index["writable"] = False

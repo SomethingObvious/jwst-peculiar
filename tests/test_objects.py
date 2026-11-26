@@ -1024,6 +1024,16 @@ def test_export_leaves_a_folder_of_other_files_alone(
     site.mkdir()
     first = export(b, site)
     assert export(b, site) == first
+    # a new build of the viewer replaces the old one's assets, and a file of yours
+    # beside them stays
+    (site / "CNAME").write_text("example.org", encoding="utf-8")
+    for build in ("old", "new"):
+        app = tmp_path / build
+        (app / "assets").mkdir(parents=True)
+        (app / "assets" / f"{build}.js").write_text(build, encoding="utf-8")
+        export(b, site, app)
+    assert [p.name for p in (site / "assets").iterdir()] == ["new.js"]
+    assert (site / "CNAME").is_file()
 
 
 def test_site_meta_takes_any_name_and_url(listed: Config, tmp_path: Path) -> None:

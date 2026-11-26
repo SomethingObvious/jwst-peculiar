@@ -48,7 +48,7 @@ STEP_HELP = """steps:
   embed    Zoobot embeddings of the stamps, on the GPU if there is one
   rank     the rarity list, with the label model once there are verdicts
   like     the objects that look most like ones you give
-  label    a random sample to give verdicts on in the viewer
+  label    fit the label model on the verdicts given in the viewer
   view     open a list in the browser
   compact  the list of sources too small for a stamp
 

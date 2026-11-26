@@ -412,6 +412,44 @@ def test_cut_stops_with_the_way_round_when_gaia_is_down(
         gaia_stars(cfg, "a", offsets([0.0], [0.0]))
 
 
+def test_gaia_falls_back_to_a_copy_when_esas_is_down(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import pyvo
+
+    star = pd.DataFrame({
+        "ra": [RA0],
+        "dec": [DEC0],
+        "phot_g_mean_mag": [15.0],
+        "classprob_dsc_combmod_star": [1.0],
+    })
+    asked: list[str] = []
+
+    class Service:
+        def __init__(self, url: str, **_kwargs: object) -> None:
+            asked.append(url)
+            if "esa.int" in url:
+                raise pyvo.dal.DALFormatError(Exception())
+
+        def run_sync(self, _q: str) -> Service:
+            return self
+
+        def to_table(self) -> Service:
+            return self
+
+        def to_pandas(self) -> pd.DataFrame:
+            return star
+
+    monkeypatch.setattr(pyvo.dal, "TAPService", Service)
+    cfg = Config(name="t", out=tmp_path, pattern="{field}_{band}.fits")
+    got = gaia_stars(cfg, "a", offsets([0.0, 60.0], [0.0, 30.0]))
+    assert got.ra.tolist() == [RA0]
+    assert asked == list(cut.GAIA_TAP)
+    # cached, so a second cut asks nobody
+    assert gaia_stars(cfg, "a", offsets([0.0], [0.0])).ra.tolist() == [RA0]
+    assert len(asked) == 2
+
+
 @pytest.mark.parametrize(
     ("name", "split"),
     [
@@ -1071,12 +1109,12 @@ def test_a_tile_off_the_mosaic_is_left_out_of_every_step(
     asked: list[str] = []
 
     def a_star(q: str, _name: str) -> pd.DataFrame:
-        # one bright star in the middle of the box asked for
+        # one bright star in the middle of the cone asked for
         asked.append(q)
-        (r0, r1), (d0, d1) = re.findall(r"BETWEEN (\S+) AND (\S+)", q)
+        ra, dec = re.findall(r"CIRCLE\('ICRS', (\S+), (\S+),", q)[0]
         return pd.DataFrame({
-            "ra": [(float(r0) + float(r1)) / 2],
-            "dec": [(float(d0) + float(d1)) / 2],
+            "ra": [float(ra)],
+            "dec": [float(dec)],
             "phot_g_mean_mag": [15.0],
             "classprob_dsc_combmod_star": [1.0],
         })
@@ -1251,7 +1289,7 @@ def test_view_exports_a_named_site_and_wants_a_list_first(
     site = tmp_path / "site"
     url = "https://example.org/demo"
     assert (
-        view_main(listed, ["--export", str(site), "--name", "Demo", "--site_url", url])
+        view_main(listed, ["--export", str(site), "--name", "Demo", "--site-url", url])
         == 0
     )
     index = json.loads((site / "run" / "index.json").read_text(encoding="utf-8"))

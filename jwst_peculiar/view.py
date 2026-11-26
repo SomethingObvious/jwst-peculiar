@@ -358,7 +358,7 @@ def main(cfg: Config, argv: list[str]) -> int:
     p.add_argument("--no-browser", dest="browser", action="store_false")
     p.add_argument("--export", type=Path, default=None, help="write a static site here")
     p.add_argument(
-        "--site_url",
+        "--site-url",
         default=None,
         help="with --export, where the site will be hosted, for its social card",
     )

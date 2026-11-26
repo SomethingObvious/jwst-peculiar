@@ -75,7 +75,11 @@ MAX_ZEROS, OUTSHONE = 0.05, 0.6
 RADII = (0.1, 0.25)
 NJY_PER_MJY_SR_ARCSEC2 = 2.350443e-11 * 1e15
 FINE = grid(N)
-GAIA_TAP = "https://gea.esac.esa.int/tap-server/tap"
+GAIA_TAP = (
+    "https://gea.esac.esa.int/tap-server/tap",
+    # Heidelberg's copy of DR3, for when ESA's archive is down
+    "https://gaia.ari.uni-heidelberg.de/tap",
+)
 # seconds Gaia may go quiet before cut gives up on it
 TIMEOUT_S = 60
 # seconds to wait before each new try, as Gaia turns away fields cut at once (HTTP 429)
@@ -425,9 +429,7 @@ def gaia_stars(cfg: Config, name: str, t: pd.DataFrame) -> pd.DataFrame:
     cache = cfg.out / "gaia" / f"{name}.csv"
     if cache.exists():
         return pd.read_csv(cache)
-    box = [float(t.ra.min()) - 0.05, float(t.ra.max()) + 0.05]
-    box += [float(t.dec.min()) - 0.05, float(t.dec.max()) + 0.05]
-    where = f"ra BETWEEN {box[0]} AND {box[1]} AND dec BETWEEN {box[2]} AND {box[3]}"
+    where = f"1 = CONTAINS(POINT('ICRS', ra, dec), {_cone(t)})"
     src, fields = "gaiadr3.gaia_source", ", ".join(cols)
     q = f"SELECT {fields} FROM {src} WHERE phot_g_mean_mag < 21 AND {where}"  # noqa: S608 only numbers go in
     got = _query_gaia(q, name)
@@ -437,7 +439,7 @@ def gaia_stars(cfg: Config, name: str, t: pd.DataFrame) -> pd.DataFrame:
 
 
 def _query_gaia(q: str, name: str) -> pd.DataFrame:
-    """Run a query on Gaia's archive, trying again after each of GAIA_WAITS.
+    """Run a query on each of GAIA_TAP in turn, trying again after each of GAIA_WAITS.
 
     Returns:
         The rows.
@@ -447,25 +449,34 @@ def _query_gaia(q: str, name: str) -> pd.DataFrame:
     """
     import pyvo  # noqa: PLC0415 only needed once per field
 
-    tries = 0
-    while True:
-        try:
-            got: pd.DataFrame = (
-                pyvo.dal
-                .TAPService(GAIA_TAP, session=PatientSession())
-                .run_sync(q)
-                .to_table()
-                .to_pandas()
-            )
-        except (pyvo.dal.DALAccessError, requests.RequestException) as err:
-            if tries == len(GAIA_WAITS):
-                msg = f"Couldn't query Gaia for {name} ({err})."
-                msg += " Set gaia: false to skip spikes."
-                raise SystemExit(msg) from err
-            time.sleep(GAIA_WAITS[tries])
-            tries += 1
-        else:
-            return got
+    errors: list[Exception] = []
+    for wait in (0, *GAIA_WAITS):
+        time.sleep(wait)
+        for url in GAIA_TAP:
+            try:
+                got: pd.DataFrame = (
+                    pyvo.dal
+                    .TAPService(url, session=PatientSession())
+                    .run_sync(q)
+                    .to_table()
+                    .to_pandas()
+                )
+            except (pyvo.dal.DALAccessError, requests.RequestException) as err:
+                errors.append(err)
+            else:
+                return got
+    msg = f"Couldn't query Gaia for {name} ({errors[-1]})."
+    msg += " Set gaia: false to skip spikes."
+    raise SystemExit(msg) from errors[-1]
+
+
+def _cone(t: pd.DataFrame) -> str:
+    # Every copy of Gaia indexes a cone, while a range of RA scans the whole table.
+    # Its 0.075 deg margin takes in all of a box 0.05 deg past the sources, corners too.
+    ra, dec = t.ra.to_numpy(float), t.dec.to_numpy(float)
+    ra0, dec0 = (ra.min() + ra.max()) / 2, (dec.min() + dec.max()) / 2
+    half = np.ptp(ra) / 2 * np.cos(np.radians(dec0)), np.ptp(dec) / 2
+    return f"CIRCLE('ICRS', {ra0}, {dec0}, {float(np.hypot(*half)) + 0.075})"
 
 
 def describe(out: Path, band: Band, filters: tuple[str, ...]) -> None:

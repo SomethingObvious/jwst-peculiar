@@ -21,12 +21,13 @@ import re
 from astropy.io import fits
 import yaml
 
-from jwst_peculiar.config import BYTES_PER_PIXEL
+from jwst_peculiar.config import BYTES_PER_PIXEL, RGB
 
 BAND = re.compile(r"f(\d{3,4})[wmn]2?", re.IGNORECASE)
 COMPACT = ("f115w", "f150w", "f277w", "f444w")
 NOISE = re.compile(r"([-_](nircam|clear))+$", re.IGNORECASE)
 SEPARATORS = "-_."
+IMAGE_AXES = 2
 # a field needing more than twice this for cut is cut in tiles of about this
 TILE_BYTES = 4e9
 # maps that come beside a mosaic and cover the same fields
@@ -85,7 +86,7 @@ def _after_band(seen: Seen) -> Seen:
     names = {
         p.replace("{field}", f): b for p, fs in seen.items() for f, b in fs.items()
     }
-    if len(names) < 2 or any(len(fs) > 1 for fs in seen.values()):  # noqa: PLR2004 a pair to compare
+    if len(names) <= 1 or any(len(fs) > 1 for fs in seen.values()):
         return seen
     pre = os.path.commonprefix(list(names))  # noqa: RUF071 names, not paths, character by character
     pre = pre[: max(pre.rfind(c) for c in SEPARATORS) + 1]
@@ -118,7 +119,7 @@ def _image_hdu(path: Path) -> int:
         primary = fits.getheader(path, 0)
     except OSError:
         return 1
-    return 0 if primary.get("NAXIS") == 2 else 1  # noqa: PLR2004 an image
+    return 0 if primary.get("NAXIS") == IMAGE_AXES else 1
 
 
 def guess(folder: Path) -> dict[str, object]:
@@ -137,7 +138,7 @@ def guess(folder: Path) -> dict[str, object]:
     pattern = max(seen, key=lambda p: sum(map(len, seen[p].values())))
     fields = seen[pattern]
     common: list[str] = sorted(set.intersection(*fields.values()), key=_microns)
-    if len(common) < 3:  # noqa: PLR2004 red, green and blue
+    if len(common) < len(RGB):
         msg = f"The fields in {folder} share only {common}, and a colour stamp needs 3."
         raise SystemExit(msg)
     detect, green, blue = colours(common)

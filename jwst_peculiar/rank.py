@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 from scipy.spatial import cKDTree
+from sklearn.linear_model import LogisticRegression
 
 from jwst_peculiar.config import read_config
 from jwst_peculiar.verdicts import read_verdicts
@@ -39,6 +40,8 @@ MODEL = "label_model.npz"
 CLASSES = {"artifact": 0, "not_anomalous": 1, "interesting": 2, "known": 2}
 WORTH = 2
 SAMPLE_FROM, SAMPLE_TO = 100, 2000
+# verdicts of each kind label needs before it fits
+MIN_VERDICTS = 5
 # An object a brighter neighbour outshines is still a real galaxy, so it stays a
 # neighbour for rarity and is only kept off the list.
 HIDE_ONLY = ("flag_outshone",)
@@ -147,7 +150,7 @@ def rarity(
     others = e if ref is None else np.concatenate([e, ref])
     # a block of similarities stays near 200 MB however big the reference is
     block = max(16, min(block, 50_000_000 // len(others)))
-    if len(others) < 2:  # noqa: PLR2004 an object alone has no neighbour
+    if len(others) <= 1:
         return np.ones(len(e))
     # a run of a handful of objects makes do with the farthest neighbour it has
     k = min(K, len(others) - 1)
@@ -174,8 +177,6 @@ def fit(e: npt.NDArray[np.float32], y: npt.NDArray[np.intp]) -> dict[str, Any]:
     Returns:
         Its weights, as arrays an npz can hold.
     """
-    from sklearn.linear_model import LogisticRegression  # noqa: PLC0415 only label and rank need it
-
     clf = LogisticRegression(C=0.1, class_weight="balanced", max_iter=5000).fit(e, y)
     return {"coef": clf.coef_, "intercept": clf.intercept_, "classes": clf.classes_}
 
@@ -374,9 +375,10 @@ def label_main(cfg: Config, argv: list[str]) -> int:
     lab, idx = lab[idx >= 0], idx[idx >= 0]
     y = np.asarray(lab.label.map(CLASSES), dtype=np.intp)
     counts = np.bincount(y, minlength=3)
-    if np.min(counts) < 5:  # noqa: PLR2004 too few to fit a class on
+    if np.min(counts) < MIN_VERDICTS:
         msg = (
-            "Need at least 5 verdicts of each kind (artifact, not anomalous, and"
+            f"Need at least {MIN_VERDICTS} verdicts of each kind (artifact, not"
+            " anomalous, and"
             " interesting or known),"
             f" have {counts.tolist()}."
         )

@@ -35,12 +35,13 @@ def read_verdicts(run_dir: Path) -> dict[str, dict[str, Any]]:
         }
 
 
-def save_verdict(  # noqa: PLR0917 the server passes all five positionally
+def save_verdict(
     run_dir: Path,
     key: str,
     verdict: str | None,
-    star: bool,  # noqa: FBT001 the server passes all five positionally
-    note: str,
+    *,
+    star: bool = False,
+    note: str = "",
 ) -> str:
     """Write one verdict into verdicts.csv.
 

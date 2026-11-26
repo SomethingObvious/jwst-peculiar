@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 import warnings
 
 import numpy as np
@@ -37,6 +37,8 @@ BRIGHT, SELF_R, DETECTED, MIN_BANDS = 0.1, 0.3, 3.0, 2
 STAR_PROB = 0.5  # Gaia's own threshold on its star probability
 # Measured on 1,921 Gaia star visits in COSMOS-Web, in F277W.
 SPIKE_L0, SPIKE_SLOPE, SPIKE_WIDTH = 4.70, 0.215, 0.15
+# half the 5-pixel box a star's brightness is read in
+HALF_BOX = 2
 HALO_R0, HALO_SLOPE = 2.30, 0.073
 
 
@@ -75,7 +77,9 @@ def mid_dec(t: pd.DataFrame) -> float:
     return float(t.dec.median()) if len(t) else 0.0
 
 
-def sky_xy(ra: Any, dec: Any, dec0: float) -> Floats:  # noqa: ANN401 arrays or columns
+def sky_xy(
+    ra: Floats | pd.Series[float], dec: Floats | pd.Series[float], dec0: float
+) -> Floats:
     """Return positions in arcsec on a flat sky, with one cos(dec) for the field.
 
     One cos(dec) for the whole field keeps offsets between objects right.
@@ -173,7 +177,9 @@ class StampBoxes:
         x, y, h = self.cx[i], self.cy[i], self.hpx[i]
         return self.grid.wcs.pixel_to_world([x, x + h, x], [y, y, y + h])
 
-    def count(self, sky: Grid, value: Floats, *, skip_self: bool) -> Any:  # noqa: ANN401 an int array
+    def count(
+        self, sky: Grid, value: Floats, *, skip_self: bool
+    ) -> npt.NDArray[np.int_]:
         """Count positions inside each stamp at least a tenth as bright as its object.
 
         Returns:
@@ -280,7 +286,7 @@ def merged(t: pd.DataFrame, bad: Bools) -> Bools:
     out = np.zeros(len(t), bool)
     x, y = sky_xy(t.ra, t.dec, mid_dec(t)).T
     for _, g in t.loc[~bad].groupby("parent"):
-        if len(g) < 2:  # noqa: PLR2004 one piece has nothing to merge with
+        if len(g) <= 1:
             continue
         idx = g.index.to_numpy()
         top = int(idx[np.argmax(g.segment_flux.to_numpy(float))])
@@ -298,13 +304,14 @@ def known_stars(cfg: Config) -> pd.DataFrame:
 
 
 def _star_brightness(band: Band, st: pd.DataFrame) -> Floats:
-    # the brightest pixel in a 5-pixel box on each star, which is what a stamp sees
+    # the brightest pixel in a box on each star, which is what a stamp sees
     x, y = band.pixels(st.ra.to_numpy(float), st.dec.to_numpy(float))
     ix, iy = np.rint(x).astype(int), np.rint(y).astype(int)
     ny, nx = band.data.shape
     out = np.zeros(len(st))
-    for j in np.flatnonzero((ix >= 2) & (iy >= 2) & (ix < nx - 2) & (iy < ny - 2)):  # noqa: PLR2004 a 5-pixel box
-        box = band.data[iy[j] - 2 : iy[j] + 3, ix[j] - 2 : ix[j] + 3]
+    h = HALF_BOX
+    for j in np.flatnonzero((ix >= h) & (iy >= h) & (ix < nx - h) & (iy < ny - h)):
+        box = band.data[iy[j] - h : iy[j] + h + 1, ix[j] - h : ix[j] + h + 1]
         out[j] = np.nanmax(box) if np.isfinite(box).any() else 0
     return out
 

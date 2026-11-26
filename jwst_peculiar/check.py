@@ -15,7 +15,9 @@ from typing import TYPE_CHECKING, cast
 import warnings
 
 from astropy.io import fits
+from huggingface_hub import try_to_load_from_cache
 
+from jwst_peculiar.compact import BANDS, has_bands
 from jwst_peculiar.config import BYTES_PER_PIXEL, memory_size, to_mjy_sr
 from jwst_peculiar.embed import resolve_device
 
@@ -27,6 +29,9 @@ if TYPE_CHECKING:
 # SMACS 0723's run folder took 307 MB for 121 Mpx, the most per pixel measured
 DISK_PER_PIXEL = 307e6 / 121e6
 WEIGHTS = "mwalmsley/zoobot-encoder-convnext_nano"
+
+# missing mosaics named one by one before the rest are only counted
+SHOWN = 10
 
 
 def _fits_memory(cfg: Config, biggest: str, need: float) -> list[str]:
@@ -75,8 +80,6 @@ def _short(path: Path, hdu: int | str) -> bool:
 
 
 def _weights_cached() -> bool:
-    from huggingface_hub import try_to_load_from_cache  # noqa: PLC0415 only check needs it
-
     return isinstance(try_to_load_from_cache(WEIGHTS, "config.json"), str)
 
 
@@ -118,13 +121,11 @@ def report(cfg: Config) -> list[str]:
     names = cfg.field_names()
     missing = cfg.missing()
     print(f"{len(names)} fields, bands {', '.join(cfg.bands)}")  # noqa: T201 the command's report
-    from jwst_peculiar.compact import BANDS, has_bands  # noqa: PLC0415 only the report needs it
-
     if not has_bands(cfg):
         print(f"no compact list, as it needs {', '.join(BANDS)}")  # noqa: T201 the command's report
-    problems = [f"missing {p}" for p in missing[:10]]
-    if len(missing) > 10:  # noqa: PLR2004 enough to see the pattern
-        problems.append(f"and {len(missing) - 10} more missing mosaics")
+    problems = [f"missing {p}" for p in missing[:SHOWN]]
+    if len(missing) > SHOWN:
+        problems.append(f"and {len(missing) - SHOWN} more missing mosaics")
     gone = {p.as_posix() for p in missing}
     problems += [
         f"{p} is cut short or empty, so its download probably stopped early"

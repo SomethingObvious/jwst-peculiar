@@ -56,6 +56,7 @@ from photutils.aperture import CircularAperture, aperture_photometry
 from PIL import Image
 from scipy.spatial import cKDTree
 from scipy.special import logsumexp
+from sklearn.mixture import GaussianMixture
 
 from jwst_peculiar.config import sky_wcs, to_mjy_sr
 from jwst_peculiar.flags import (
@@ -451,8 +452,6 @@ def features(t: pd.DataFrame) -> tuple[Floats, Floats]:
 
 def fit(x: Floats, seed: int = 0) -> Any:  # noqa: ANN401 scikit-learn has no types
     """Return the mixture the candidates are ranked under, fitted to `x`."""
-    from sklearn.mixture import GaussianMixture  # noqa: PLC0415 only compact needs it
-
     # fewer components for a run of fewer than 200 candidates, at least 10 to each
     n = min(COMPONENTS, max(1, len(x) // 10))
     mix = GaussianMixture(n, covariance_type="full", random_state=seed, max_iter=500)
@@ -494,7 +493,9 @@ def _panel(hdu: tuple[Any, Any, float], at: Any) -> Floats:  # noqa: ANN401 astr
     return np.asarray(small.resize((TILE, TILE), Image.Resampling.BILINEAR), float)
 
 
-def tile(hdus: dict[str, tuple[Any, Any, float]], ra: float, dec: float) -> Any:  # noqa: ANN401 a uint8 tile
+def tile(
+    hdus: dict[str, tuple[Any, Any, float]], ra: float, dec: float
+) -> npt.NDArray[np.uint8]:
     """Cut a 2.4" four-panel tile, its first row lowest like the stamps.
 
     The F444W, F277W, F150W colour panel and F115W sit on top, F277W and F444W
@@ -546,7 +547,7 @@ def load(cfg: Config) -> pd.DataFrame:
     return t
 
 
-def stamps(cfg: Config, top: pd.DataFrame) -> Any:  # noqa: ANN401 uint8 tiles
+def stamps(cfg: Config, top: pd.DataFrame) -> npt.NDArray[np.uint8]:
     """Cut a tile for every listed candidate, a field at a time.
 
     Returns:

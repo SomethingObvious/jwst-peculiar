@@ -340,7 +340,7 @@ def test_verdicts_train_the_model_and_lists_open_in_the_viewer(
     cfg = fake_run(tmp_path, 30)
     kinds = ["artifact", "not_anomalous", "interesting", "known"]
     for i in range(24):
-        save_verdict(tmp_path, f"a:{i + 1}", kinds[i % 4], False, "")
+        save_verdict(tmp_path, f"a:{i + 1}", kinds[i % 4])
     assert label_main(cfg, []) == 0
     assert (tmp_path / MODEL).is_file()
     assert rank_main(cfg, ["-n", "10"]) == 0
@@ -820,12 +820,7 @@ def test_a_faint_star_is_flagged_and_a_brown_dwarf_is_not() -> None:
 def test_cached_weights_load_without_asking_the_hub(
     monkeypatch: pytest.MonkeyPatch, cached: set[str], *, offline: bool
 ) -> None:
-    import huggingface_hub
     from huggingface_hub import constants
-    import timm
-    import torch
-
-    from jwst_peculiar.embed import load_encoder
 
     seen = []
 
@@ -836,8 +831,8 @@ def test_cached_weights_load_without_asking_the_hub(
     def from_cache(_: str, name: str) -> str | None:
         return f"/cache/{name}" if name in cached else None
 
-    monkeypatch.setattr(huggingface_hub, "try_to_load_from_cache", from_cache)
-    monkeypatch.setattr(timm, "create_model", create_model)
+    monkeypatch.setattr("jwst_peculiar.embed.try_to_load_from_cache", from_cache)
+    monkeypatch.setattr("timm.create_model", create_model)
     monkeypatch.setattr(constants, "HF_HUB_OFFLINE", False)
     load_encoder("nano", torch.device("cpu"))
     assert seen == [offline]
@@ -989,7 +984,7 @@ def test_verdicts_saved_by_a_spreadsheet_still_load(port: int, listed: Config) -
     }
     verdict = {"key": "a:3", "verdict": "known", "star": False, "note": ""}
     assert _ask(port, "POST", "/run/api/verdict", body=verdict)[0] == 200
-    save_verdict(listed.out, "a:1", None, False, "")
+    save_verdict(listed.out, "a:1", None)
     with (listed.out / "verdicts.csv").open(encoding="utf-8", newline="") as f:
         rows = list(csv.reader(f))
     assert rows[0] == ["key", "verdict", "star", "note", "updated", "mine"]
@@ -997,7 +992,7 @@ def test_verdicts_saved_by_a_spreadsheet_still_load(port: int, listed: Config) -
     assert rows[1][5] == "keep me"
     assert rows[2][:4] == ["a:3", "known", "0", ""]
     with pytest.raises(ValueError, match="Unknown verdict"):
-        save_verdict(listed.out, "a:1", "odd", False, "")
+        save_verdict(listed.out, "a:1", "odd")
 
 
 def test_the_page_hears_why_verdicts_did_not_load(port: int, listed: Config) -> None:
@@ -1193,7 +1188,7 @@ def test_a_sample_skips_the_top_and_whatever_has_a_verdict(tmp_path: Path) -> No
     assert rank_main(cfg, ["-n", "160", "--image-only"]) == 0
     order = pd.read_csv(tmp_path / "rank.csv")
     judged = str(order.id.iloc[120])
-    save_verdict(tmp_path, judged, "artifact", False, "")
+    save_verdict(tmp_path, judged, "artifact")
     assert rank_main(cfg, ["--sample", "-n", "20", "--image-only"]) == 0
     sample = pd.read_csv(tmp_path / "sample.csv")
     assert len(sample) == 20
@@ -1203,7 +1198,7 @@ def test_a_sample_skips_the_top_and_whatever_has_a_verdict(tmp_path: Path) -> No
 
 def test_label_wants_five_verdicts_of_each_kind(tmp_path: Path) -> None:
     cfg = fake_run(tmp_path, 30)
-    save_verdict(tmp_path, "a:1", "artifact", False, "")
+    save_verdict(tmp_path, "a:1", "artifact")
     with pytest.raises(SystemExit, match="at least 5 verdicts of each kind"):
         label_main(cfg, [])
 
@@ -1280,7 +1275,7 @@ def test_a_verdicts_file_that_wont_read_or_save_gets_a_reason(
     assert status == 500
     assert b"Couldn't read run/verdicts.json" in body
 
-    def locked(*_args: object) -> str:
+    def locked(*_args: object, **_kwargs: object) -> str:
         raise PermissionError
 
     monkeypatch.setattr("jwst_peculiar.server.save_verdict", locked)

@@ -9,14 +9,18 @@ doesn't depend on which way it faces.
 from __future__ import annotations
 
 import argparse
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
+from huggingface_hub import constants, try_to_load_from_cache
 import numpy as np
+import timm
 import torch
 
 from jwst_peculiar.config import written
 
 if TYPE_CHECKING:
+    import numpy.typing as npt
+
     from jwst_peculiar.config import Config
 
 BATCH = 32
@@ -57,13 +61,6 @@ def load_encoder(size: str, device: torch.device) -> torch.nn.Module:
     Raises:
         SystemExit: When timm, which loads the encoder, isn't installed.
     """
-    try:
-        import timm  # noqa: PLC0415 only embed needs it
-    except ImportError as err:
-        msg = "embed needs timm: pip install timm"
-        raise SystemExit(msg) from err
-    from huggingface_hub import constants, try_to_load_from_cache  # noqa: PLC0415 comes with timm
-
     repo = ENCODERS[size].removeprefix("hf_hub:")
 
     def have(name: str) -> bool:
@@ -92,7 +89,9 @@ def load_encoder(size: str, device: torch.device) -> torch.nn.Module:
     return net.eval().to(device)
 
 
-def embed(stamps: Any, net: torch.nn.Module, *, device: torch.device) -> Any:  # noqa: ANN401 uint8 stamps in, float32 rows out
+def embed(
+    stamps: npt.NDArray[np.uint8], net: torch.nn.Module, *, device: torch.device
+) -> npt.NDArray[np.float32]:
     """Embed (n, N, N, 3) uint8 stamps as the mean over eight orientations.
 
     Returns:

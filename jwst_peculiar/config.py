@@ -8,6 +8,7 @@ object near its edge is whole, and keeps only the objects centred in its own squ
 from __future__ import annotations
 
 from contextlib import contextmanager
+import ctypes
 from dataclasses import dataclass
 import difflib
 import glob
@@ -26,6 +27,7 @@ import yaml
 if TYPE_CHECKING:
     from collections.abc import Generator
 
+RGB = ("red", "green", "blue")
 TILE_MARK = "~"
 # written in place of a tile's outputs when the tile has no sources, off a mosaic's edge
 EMPTY = "empty"
@@ -44,8 +46,6 @@ SkyCoords: TypeAlias = Any
 def memory_size() -> float:
     """Return the machine's memory in bytes, or 0 when it can't be read."""
     if os.name == "nt":
-        import ctypes  # noqa: PLC0415 Windows only
-
         # MEMORYSTATUSEX is 64 bytes: its own length, then the total memory at 8
         status = (ctypes.c_ulonglong * 8)(64)
         kernel = getattr(ctypes, "windll").kernel32  # noqa: B009 windll is Windows only
@@ -327,7 +327,7 @@ def _resolve(path: Path, raw: dict[str, Any]) -> dict[str, Any]:
             args[key] = _names(raw[key], keep_case=key == "fields")
     if "detect" in raw:
         args["detect"] = str(raw["detect"]).lower()
-    if len(args.get("colour", "rgb")) != 3:  # noqa: PLR2004 red, green and blue
+    if len(args.get("colour", RGB)) != len(RGB):
         msg = f"{path}'s colour needs three bands, red to blue, not {args['colour']}."
         raise SystemExit(msg)
     return args

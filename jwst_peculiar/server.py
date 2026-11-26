@@ -209,6 +209,6 @@ class _ViewerHandler(BaseHTTPRequestHandler):
                 self.bundle.run_dir,
                 key,
                 body.get("verdict"),
-                star,
-                str(body.get("note") or ""),
+                star=star,
+                note=str(body.get("note") or ""),
             )

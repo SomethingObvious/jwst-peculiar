@@ -61,16 +61,13 @@ def run(cfg: Config, rest: list[str]) -> int:
     Returns:
         The first nonzero exit code, or 0.
     """
-    from jwst_peculiar import compact  # noqa: PLC0415 these load torch and scikit-learn
-    from jwst_peculiar.check import main as check  # noqa: PLC0415 as above
-    from jwst_peculiar.cut import main as cut  # noqa: PLC0415 as above
-    from jwst_peculiar.embed import main as embed  # noqa: PLC0415 as above
-    from jwst_peculiar.rank import main as rank  # noqa: PLC0415 as above
-
-    steps = [(check, []), (cut, rest), (embed, []), (rank, ["rank"])]
-    if compact.has_bands(cfg):
-        steps.append((compact.main, []))
-    for step, args in steps:
+    steps = [("check", []), ("cut", rest), ("embed", []), ("rank", ["rank"])]
+    if import_module("jwst_peculiar.compact").has_bands(cfg):
+        steps.append(("compact", []))
+    for name, args in steps:
+        step: Callable[[Config, list[str]], int] = import_module(
+            f"jwst_peculiar.{name}"
+        ).main
         code = step(cfg, args)
         if code:
             return code

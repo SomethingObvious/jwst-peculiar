@@ -36,6 +36,7 @@ from photutils.aperture import CircularAperture, aperture_photometry
 from photutils.background import Background2D, MedianBackground
 from photutils.segmentation import SourceCatalog, deblend_sources, detect_sources
 from PIL import Image
+import pyvo
 import requests
 from scipy.ndimage import map_coordinates, maximum_filter
 from typing_extensions import override
@@ -215,7 +216,7 @@ def read_band(path: Path, hdu: int | str, box: Box | None = None) -> Band:
 def _parents(
     pieces: npt.NDArray[np.int32],
     parent: npt.NDArray[np.int32],
-    labels: Any,  # noqa: ANN401 an int array
+    labels: npt.NDArray[np.int_],
 ) -> list[int]:
     # every deblended piece lies inside exactly one segment of the map before deblending
     on = pieces > 0
@@ -398,7 +399,7 @@ def stamps(t: pd.DataFrame, colour: list[Band]) -> tuple[Any, Bools]:
     return out, ok
 
 
-def outshone(cut: Any) -> Bools:  # noqa: ANN401 a uint8 stamp array
+def outshone(cut: npt.NDArray[np.uint8]) -> Bools:
     """Say which stamps have a pixel well away from the centre much brighter than it.
 
     Returns:
@@ -447,8 +448,6 @@ def _query_gaia(q: str, name: str) -> pd.DataFrame:
     Raises:
         SystemExit: When the last try fails too.
     """
-    import pyvo  # noqa: PLC0415 only needed once per field
-
     errors: list[Exception] = []
     for wait in (0, *GAIA_WAITS):
         time.sleep(wait)
@@ -515,7 +514,7 @@ class Measured:
 
 def _own(
     t: pd.DataFrame, det: Band, *, core: Box | None, origin: tuple[int, int]
-) -> Any:  # noqa: ANN401 a boolean Series
+) -> Bools:
     # a tile keeps only what's centred in its own square, so neighbours never share one
     if core is None:
         return np.ones(len(t), bool)
@@ -680,7 +679,7 @@ def fitting_workers(cfg: Config, names: list[str]) -> int:
     Returns:
         1 or more.
     """
-    if len(names) < 2:  # noqa: PLR2004 one field has nothing to share
+    if len(names) <= 1:
         return 1
     need = BYTES_PER_PIXEL * max(cfg.pixels(n) for n in names)
     fit = int(memory_size() / 2 // need)

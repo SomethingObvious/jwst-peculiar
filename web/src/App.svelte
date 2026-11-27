@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import IndexList from './components/IndexList.svelte';
+  import KeySheet from './components/KeySheet.svelte';
   import Plate from './components/Plate.svelte';
   import Readout from './components/Readout.svelte';
+  import SaveStatus from './components/SaveStatus.svelte';
   import { TileFrame } from './lib/frame';
   import { TileCache } from './lib/cache';
   import type { TileData } from './lib/tiles';
@@ -13,11 +15,10 @@
     type Filters,
     type Theme,
     type Verdict,
-    type VerdictRecord,
   } from './lib/types';
   import { Verdicts } from './lib/verdicts.svelte';
   import { tanOf, type Tan } from './lib/wcs';
-  import { parseRank, runBase } from './lib/checks';
+  import { focusKind, parseRank, passesReview, runBase } from './lib/checks';
 
   const params = new URLSearchParams(location.search);
   const asked = runBase(params.get('run'), location.href);
@@ -161,31 +162,6 @@
   const lowered = $derived(
     bundle ? bundle.tiles.map((t) => `${t.key} ${t.mosaic}`.toLowerCase()) : [],
   );
-
-  const indexOfKey = $derived(new Map(bundle?.tiles.map((t, i) => [t.key, i]) ?? []));
-
-  function passesReview(
-    f: Filters,
-    q: string,
-    text: string,
-    v: VerdictRecord | undefined,
-  ): boolean {
-    if (f.verdict === 'unreviewed' && v?.verdict) {
-      return false;
-    }
-    if (f.verdict === 'starred' && !v?.star) {
-      return false;
-    }
-    if (
-      f.verdict !== 'all' &&
-      f.verdict !== 'unreviewed' &&
-      f.verdict !== 'starred' &&
-      v?.verdict !== f.verdict
-    ) {
-      return false;
-    }
-    return !q || text.includes(q) || (v?.note ?? '').toLowerCase().includes(q);
-  }
 
   const order = $derived.by(() => {
     if (!bundle || !verdicts) {
@@ -433,18 +409,6 @@
     return true;
   }
 
-  function focusKind(el: HTMLElement): { typing: boolean; widget: boolean } {
-    const type = el instanceof HTMLInputElement ? el.type : '';
-    // Sliders and checkboxes keep their own arrow and delete keys but let every other key through.
-    const widget = type === 'range' || type === 'checkbox';
-    const typing =
-      el.isContentEditable ||
-      el instanceof HTMLTextAreaElement ||
-      el instanceof HTMLSelectElement ||
-      (el instanceof HTMLInputElement && !widget);
-    return { typing, widget };
-  }
-
   function onkeydown(e: KeyboardEvent) {
     const el = e.target as HTMLElement;
     const { typing, widget } = focusKind(el);
@@ -471,14 +435,6 @@
       e.preventDefault();
     }
   }
-
-  const save = $derived(verdicts?.state ?? { kind: 'idle' as const });
-  const clock = (iso: string) => {
-    const d = new Date(iso);
-    return Number.isNaN(d.getTime())
-      ? iso
-      : d.toLocaleTimeString('en-CA', { hour12: false });
-  };
 </script>
 
 <!-- A select keeps focus after a choice, which would swallow J and K, so it lets go once it changes. -->
@@ -639,38 +595,7 @@
             <span class="num">{order.length}</span> shown{:else}not in the filtered list{/if}</span
         >
       </span>
-      <!-- The countdown sits outside the live region, or a reader would hear it every second. -->
-      <span class="save">
-        <span class="save" role="status">
-          {#if save.kind === 'saved'}
-            <i class="led ok"></i>Saved {clock(save.at)}
-          {:else if save.kind === 'saving'}
-            <i class="led busy"></i>Saving {save.pending}
-          {:else if save.kind === 'retrying'}
-            <i class="led bad"></i>Not saved, {save.pending} waiting ({save.error}).
-          {:else if save.kind === 'rejected'}
-            {@const r = bundle.tiles[indexOfKey.get(save.key) ?? -1]?.rank}
-            <i class="led bad"></i>The server turned down the verdict on rank {r} ({save.error}),
-            so it was dropped.
-          {:else if save.kind === 'local' && !verdicts.storageOk}
-            <i class="led bad"></i>This browser won't store verdicts. Export them before
-            you close the tab.
-          {:else if save.kind === 'local'}
-            <i class="led ok"></i><span
-              ><span class="num">{save.count}</span>
-              {save.count === 1 ? 'verdict' : 'verdicts'} in this browser</span
-            >
-          {:else}
-            <i class="led ok"></i>Every verdict saved
-          {/if}
-        </span>
-        {#if save.kind === 'retrying'}
-          Retrying in {save.inSeconds} s
-          <button class="ctl mini" onclick={() => verdicts?.retryNow()}
-            >Retry Now</button
-          >
-        {/if}
-      </span>
+      <SaveStatus {bundle} {verdicts} />
       <span class="themes" role="group" aria-label="Theme">
         {#each THEMES as label (label)}
           {@const t = label.toLowerCase() as Theme}
@@ -683,63 +608,7 @@
       </span>
     </footer>
 
-    <dialog
-      bind:this={sheet}
-      class="sheet"
-      aria-label="Keyboard Keys"
-      onclick={(e) => {
-        if (e.target === sheet) {
-          sheet.close();
-        }
-      }}
-    >
-      <div class="sheet-head">
-        <h2 class="label">Keys</h2>
-        <button class="ctl mini" onclick={() => sheet?.close()}>Close</button>
-      </div>
-      <dl>
-        <dt><kbd>j</kbd> <kbd>Down</kbd> <kbd>Right</kbd></dt>
-        <dd>Next candidate</dd>
-        <dt><kbd>k</kbd> <kbd>Up</kbd> <kbd>Left</kbd></dt>
-        <dd>Previous candidate</dd>
-        <dt><kbd>Home</kbd> <kbd>End</kbd></dt>
-        <dd>First or last in the list</dd>
-        <dt><kbd>PgDn</kbd> <kbd>PgUp</kbd></dt>
-        <dd>Ten forward or back</dd>
-        <dt><kbd>g</kbd></dt>
-        <dd>Go to a rank</dd>
-        <dt><kbd>1</kbd></dt>
-        <dd>Interesting</dd>
-        <dt><kbd>2</kbd></dt>
-        <dd>Artifact</dd>
-        <dt><kbd>3</kbd></dt>
-        <dd>Known object</dd>
-        <dt><kbd>4</kbd></dt>
-        <dd>Not anomalous</dd>
-        <dt><kbd>Del</kbd></dt>
-        <dd>Clear the verdict</dd>
-        <dt><kbd>s</kbd></dt>
-        <dd>Star or unstar</dd>
-        <dt><kbd>n</kbd></dt>
-        <dd>Write a note, <kbd>Esc</kbd> to leave it</dd>
-        <dt><kbd>/</kbd></dt>
-        <dd>Filter the index</dd>
-        <dt><kbd>f</kbd></dt>
-        <dd>Fit the stamp</dd>
-        <dt><kbd>0</kbd></dt>
-        <dd>One image pixel per screen pixel</dd>
-        <dt><kbd>+</kbd> <kbd>-</kbd></dt>
-        <dd>Zoom in or out</dd>
-        <dt><kbd>Shift</kbd> <kbd>Arrows</kbd></dt>
-        <dd>Pan the stamp</dd>
-        <dt><kbd>?</kbd></dt>
-        <dd>This sheet</dd>
-      </dl>
-      <p class="dim">
-        A verdict moves to the next object unless you turn that off in the Verdict
-        block. Drag the plate to pan, scroll or pinch to zoom and double-click to fit.
-      </p>
-    </dialog>
+    <KeySheet bind:dialog={sheet} />
   </div>
 {/if}
 
@@ -768,9 +637,6 @@
     font-family: var(--font-num);
     font-size: 11.5px;
     color: var(--anno);
-  }
-  .dim {
-    color: var(--chalk-3);
   }
   .app {
     height: 100dvh;
@@ -868,38 +734,11 @@
     color: var(--anno);
     font-weight: 500;
   }
-  .save {
-    display: inline-flex;
-    gap: 6px;
-    align-items: center;
-    color: var(--chalk-2);
-  }
-  .led {
-    width: 6px;
-    height: 6px;
-    display: inline-block;
-    transform: rotate(45deg);
-  }
-  .led.ok {
-    background: var(--v-known);
-  }
-  .led.busy {
-    background: var(--anno);
-  }
-  .led.bad {
-    background: transparent;
-    border: 1.5px solid var(--anno);
-  }
   .themes {
     display: flex;
   }
   .themes .ctl + .ctl {
     margin-left: -1px;
-  }
-  .mini {
-    height: 24px;
-    padding: 0 7px;
-    font-size: 11px;
   }
   .goto {
     display: flex;
@@ -915,48 +754,6 @@
   .goto input {
     width: 80px;
     height: 20px;
-  }
-  .sheet {
-    background: var(--ground-2);
-    color: var(--chalk);
-    border: 1px solid var(--rule-strong);
-    border-radius: 2px;
-    padding: 14px 18px 16px;
-    width: min(440px, calc(100vw - 32px));
-  }
-  .sheet::backdrop {
-    background: rgb(4 8 16 / 0.6);
-  }
-  .sheet-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 10px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--rule);
-  }
-  .sheet h2 {
-    margin: 0;
-    color: var(--anno);
-  }
-  .sheet dl {
-    display: grid;
-    grid-template-columns: 150px 1fr;
-    gap: 5px 12px;
-    margin: 0 0 12px;
-  }
-  .sheet dt {
-    display: flex;
-    gap: 3px;
-  }
-  .sheet dd {
-    margin: 0;
-    color: var(--chalk-2);
-  }
-  .sheet p {
-    margin: 0;
-    font-size: 11.5px;
-    line-height: 1.5;
   }
 
   /* Phones: the plate with tabs for the index and readout. */
@@ -1015,7 +812,7 @@
   .narrow .where .dim {
     display: none;
   }
-  .narrow .save {
+  .narrow :global(.save) {
     margin-left: auto;
   }
   .narrow :global(.index),

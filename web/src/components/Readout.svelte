@@ -464,9 +464,6 @@
     display: block;
     color: var(--chalk-3);
   }
-  .dim {
-    color: var(--chalk-3);
-  }
   .gap {
     display: inline-block;
     width: 8px;

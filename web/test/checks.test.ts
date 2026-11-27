@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { parseRank, runBase } from '../src/lib/checks';
+import { parseRank, passesReview, runBase } from '../src/lib/checks';
 import { TileFrame } from '../src/lib/frame';
-import type { MosaicInfo, TileInfo } from '../src/lib/types';
+import type { Filters, MosaicInfo, TileInfo, VerdictRecord } from '../src/lib/types';
 import { tanOf } from '../src/lib/wcs';
 
 describe('parseRank', () => {
@@ -58,5 +58,35 @@ describe('a mosaic without a WCS', () => {
     expect(f.toMosaic(0.5, 0.5)).toEqual([100, 209]);
     expect(f.toSky(0.5, 0.5)).toBeNull();
     expect(f.compass()).toBeNull();
+  });
+});
+
+describe('passesReview', () => {
+  const f = (verdict: Filters['verdict']): Filters => ({
+    text: '',
+    verdict,
+    mosaic: '',
+  });
+  const ring: VerdictRecord = {
+    verdict: 'interesting',
+    star: true,
+    note: 'A Ring',
+    updated: '',
+  };
+
+  it('filters on the verdict, the star or the lack of a verdict', () => {
+    expect(passesReview(f('all'), '', 'a', undefined)).toBe(true);
+    expect(passesReview(f('unreviewed'), '', 'a', undefined)).toBe(true);
+    expect(passesReview(f('unreviewed'), '', 'a', ring)).toBe(false);
+    expect(passesReview(f('starred'), '', 'a', ring)).toBe(true);
+    expect(passesReview(f('starred'), '', 'a', undefined)).toBe(false);
+    expect(passesReview(f('interesting'), '', 'a', ring)).toBe(true);
+    expect(passesReview(f('artifact'), '', 'a', ring)).toBe(false);
+  });
+
+  it('finds the text in the key and mosaic or the note', () => {
+    expect(passesReview(f('all'), 'ring', 'a:1 jw01', ring)).toBe(true);
+    expect(passesReview(f('all'), 'jw01', 'a:1 jw01', undefined)).toBe(true);
+    expect(passesReview(f('all'), 'arc', 'a:1 jw01', ring)).toBe(false);
   });
 });

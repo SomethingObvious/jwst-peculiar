@@ -344,3 +344,21 @@ It ran once on 2026-11-27 as fixed above, on bae06e5 with the COSMOS-Web label m
 It meets three goals and misses the recall pair. Of the 7 little red dots, 6 count as inside the mosaic, and the 3 it finds are at places 30, 167 and 290. Two of the misses sit where a band has no coverage, so their candidates are flagged as uncovered and at an edge, which is what those tests are for, and the third was never a candidate, as nothing was detected within 0.9" of it. With only 6 to go on, this says little about recall either way, as the plan expected.
 
 The main list is mostly mergers, close pairs, ringed and clumpy galaxies and tidal tails, with one stamp crossed by a trail. The compact list's artefacts are mostly noise peaks (14), spikes (6), stripes (6) and trails (5), and only 3 are moving dots, where JADES had 19 before the row test. One labeller again, with no second check.
+
+## Measurements Behind the Settings
+
+These were measured while building each setting, mostly on COSMOS-Web development fields, so none of them is a held-out result.
+
+- `init` on a CEERS pointing from MAST wrote a working config first time, and that run's top 50 had 2 artefacts, a satellite trail and a diffraction spike.
+- The disk `check` gives is an upper bound, as SMACS 0723 took 2.5 bytes per mosaic pixel and COSMOS-Web 1.5. SMACS 0723's 121 Mpx peaked at 3.7 GB in `cut`.
+- Cutting 4 COSMOS-Web fields at once took them from 3 minutes 17 seconds to 68 seconds on a 16-thread laptop, with the same output.
+- CEERS in 2000-pixel tiles matched the whole-mosaic run for 99.6% of objects and 49 of the top 50, and the SMACS 0723 cluster for 98.6%.
+- Ranking 101 COSMOS-Web fields one at a time with the rest as `--reference` put 158 known odd objects in the fields' top 20s instead of 137, and left the top 5% about the same (234 rather than 236).
+- The compact `edge` test left recall of known little red dots and brown dwarfs as it was and took the artefacts in the labelled top 100 from 27 to 22.
+- `flag_line` hit all three trails and one cosmic ray among 193 labelled candidates, and none of the interesting ones.
+- Reading pixels far under the sky only within 0.1" in F115W and F150W took known little red dots in the top 5% from 216 to 223 and brown dwarfs from 17 to all 18.
+- Counting a centred 2 sigma F277W detection as seen, and a lone F444W peak within 0.1" as the candidate's own centre, brought back 66 and 31 known little red dots, for 277 of 312 in the top 5%. Of the 50 in the top 100, 41 were worth a look and 4 artefacts.
+- `blue_star` took the top 100 from 35 artefacts or stars to 30 without touching a known little red dot or brown dwarf.
+- `flag_row` caught all 10 moving-source rows in UNCOVER's labelled pool and 16 of 27 in JADES's, and none of the 57 known little red dots in either or the 171 known little red dots and brown dwarfs on COSMOS-Web. Most of the rest in JADES are two dots, which look just like a close pair.
+- Two single mixture fits share about 84 of their top 100, and two averages of three share 92.
+- On a CEERS pointing about 8 of the compact top 50 were artefacts, which the line and halo tests brought to 3 clear ones and about 4 doubtful. Of Kocevski et al.'s (2025) 7 little red dots there, 5 pass every test and rank 2, 4, 38, 55 and 56 of 2710. One more was taken for a piece of a neighbour, and the brightest, at F444W 24.0, was too big a segment to be a candidate.

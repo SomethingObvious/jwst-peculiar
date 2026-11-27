@@ -26,14 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 def built_viewer() -> Path:
-    """Return the folder of the built viewer.
-
-    Returns:
-        APP_DIR.
-
-    Raises:
-        SystemExit: If the viewer hasn't been built.
-    """
+    """Return the folder of the built viewer."""
     if not (APP_DIR / "index.html").is_file():
         msg = (
             f"The viewer isn't built, as {APP_DIR / 'index.html'} is missing. "
@@ -112,15 +105,9 @@ class _ViewerHandler(BaseHTTPRequestHandler):
         self._send(status, json.dumps({"error": message}).encode(), "application/json")
 
     def _from_elsewhere(self) -> bool:
-        """Tell a request from the viewer's own page from one sent by another site.
-
-        A browser lets any page send requests to localhost, and a hostile one can
-        point its own domain here to read the answers. Neither can fake these headers.
-
-        Returns:
-            True when the Host or Origin isn't this server, or the browser says the
-            request came from another site.
-        """
+        """Tell a request from the viewer's own page from one sent by another site."""
+        # any page can send to localhost, and DNS rebinding can read the answers, but
+        # neither can fake these headers
         port = self.connection.getsockname()[1]
         here = {f"127.0.0.1:{port}", f"localhost:{port}"}
         origin = self.headers.get("Origin")

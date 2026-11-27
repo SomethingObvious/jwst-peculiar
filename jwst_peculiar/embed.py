@@ -1,9 +1,7 @@
 """`embed`: Zoobot embeddings of every field's stamps.
 
-The encoder is Zoobot's ConvNeXt-nano, loaded through timm from its Apache-2.0
-weights on the Hugging Face hub. Each stamp is embedded in its four turns and their
-mirror images, and the mean is normalised to unit length, so an object's embedding
-doesn't depend on which way it faces.
+Each stamp is embedded in its eight turns and mirror images and the mean normalised,
+so an embedding doesn't depend on which way the object faces.
 """
 
 from __future__ import annotations
@@ -31,14 +29,7 @@ ENCODERS = {
 
 
 def resolve_device(spec: str) -> torch.device:
-    """Find the device a --device value names, failing early when it isn't there.
-
-    Returns:
-        The device, with "auto" picking CUDA, then MPS, then the CPU.
-
-    Raises:
-        RuntimeError: If it names CUDA or MPS and torch can't see one.
-    """
+    """Find the device a --device value names, failing early when it isn't there."""
     if spec == "auto":
         if torch.cuda.is_available():
             return torch.device("cuda")
@@ -56,11 +47,7 @@ def resolve_device(spec: str) -> torch.device:
 
 
 def load_encoder(size: str, device: torch.device) -> torch.nn.Module:
-    """Return a Zoobot encoder with its classifier head removed.
-
-    Raises:
-        SystemExit: When timm, which loads the encoder, isn't installed.
-    """
+    """Return a Zoobot encoder with its classifier head removed."""
     repo = ENCODERS[size].removeprefix("hf_hub:")
 
     def have(name: str) -> bool:
@@ -92,11 +79,7 @@ def load_encoder(size: str, device: torch.device) -> torch.nn.Module:
 def embed(
     stamps: npt.NDArray[np.uint8], net: torch.nn.Module, *, device: torch.device
 ) -> npt.NDArray[np.float32]:
-    """Embed (n, N, N, 3) uint8 stamps as the mean over eight orientations.
-
-    Returns:
-        (n, d) float32 rows of unit length.
-    """
+    """Embed (n, N, N, 3) uint8 stamps as the mean over eight orientations."""
     out = []
     with torch.inference_mode():
         # once even with no stamps, so a tile with no objects gets (0, d) rows

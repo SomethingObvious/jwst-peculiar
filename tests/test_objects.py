@@ -42,9 +42,7 @@ from jwst_peculiar.compact import (
     piece,
     sharp,
 )
-from jwst_peculiar.compact import (
-    main as compact_main,
-)
+from jwst_peculiar.compact import main as compact_main
 from jwst_peculiar.config import EMPTY, Config, read_config, written
 from jwst_peculiar.cut import (
     Band,
@@ -58,9 +56,7 @@ from jwst_peculiar.cut import (
     render,
     wcs_record,
 )
-from jwst_peculiar.cut import (
-    main as cut_main,
-)
+from jwst_peculiar.cut import main as cut_main
 from jwst_peculiar.embed import embed, load_encoder, resolve_device
 from jwst_peculiar.embed import main as embed_main
 from jwst_peculiar.flags import blobs, merged, mid_sky, on_spikes
@@ -112,6 +108,15 @@ def gaussian(
     return np.asarray(amp * np.exp(-r2 / (2 * sigma**2)), np.float32)
 
 
+def gaia_star(ra: float, dec: float, g: float, *, p: float = 1.0) -> pd.DataFrame:
+    return pd.DataFrame({
+        "ra": [ra],
+        "dec": [dec],
+        "phot_g_mean_mag": [g],
+        "classprob_dsc_combmod_star": [p],
+    })
+
+
 def offsets(east: list[float], north: list[float]) -> pd.DataFrame:
     # objects at offsets in arcsec from RA0, DEC0, each with a 0.6 arcsec stamp
     dec = DEC0 + np.array(north) / 3600
@@ -130,12 +135,7 @@ def test_one_band_peaks_are_blobs_and_real_sources_are_not() -> None:
 
 
 def test_spike_flags_follow_the_roll_angle() -> None:
-    star = pd.DataFrame({
-        "ra": [RA0],
-        "dec": [DEC0],
-        "phot_g_mean_mag": [18.0],
-        "classprob_dsc_combmod_star": [0.9],
-    })
+    star = gaia_star(RA0, DEC0, 18.0, p=0.9)
     # 4" out is past the halo (2.3") and inside the spikes' reach (4.7") at G 18.
     t = offsets([0.0, 4 * np.sin(np.radians(30))], [4.0, 4 * np.cos(np.radians(30))])
     assert on_spikes(t, star, roll=0.0).tolist() == [True, False]
@@ -409,12 +409,7 @@ def test_gaia_falls_back_to_a_copy_and_says_the_way_round_if_both_are_down(
 ) -> None:
     import pyvo
 
-    star = pd.DataFrame({
-        "ra": [RA0],
-        "dec": [DEC0],
-        "phot_g_mean_mag": [15.0],
-        "classprob_dsc_combmod_star": [1.0],
-    })
+    star = gaia_star(RA0, DEC0, 15.0)
     asked: list[str] = []
     down = ["esa.int"]
 
@@ -1164,12 +1159,7 @@ def test_a_tile_off_the_mosaic_is_left_out_of_every_step(
         # one bright star in the middle of the cone asked for
         asked.append(q)
         ra, dec = re.findall(r"CIRCLE\('ICRS', (\S+), (\S+),", q)[0]
-        return pd.DataFrame({
-            "ra": [float(ra)],
-            "dec": [float(dec)],
-            "phot_g_mean_mag": [15.0],
-            "classprob_dsc_combmod_star": [1.0],
-        })
+        return gaia_star(float(ra), float(dec), 15.0)
 
     monkeypatch.setattr(cut, "_query_gaia", a_star)
     assert cut_main(cfg, ["--workers", "1"]) == 0

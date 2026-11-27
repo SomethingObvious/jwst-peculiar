@@ -1,10 +1,7 @@
 """`view`: open a list of objects in the web viewer, to judge and label them.
 
-Each object shows as a tile, its stamp the tile's picture and its field the mosaic,
-so verdicts work as they do for tiles and save to verdicts.csv in the run folder.
-`label` learns from them. A row with a `tile` takes its picture from the
-compact list's tiles, as compact candidates have no stamp in their field, so one
-list can mix both.
+A row with a `tile` takes its picture from the compact list's tiles, so one list can
+mix both kinds.
 """
 
 from __future__ import annotations
@@ -124,14 +121,7 @@ class ObjectBundle:
         return out.getvalue()
 
     def read(self, path: str) -> tuple[bytes, str]:
-        """Read one viewer path.
-
-        Returns:
-            The file's bytes and its content type.
-
-        Raises:
-            FileNotFoundError: The list has nothing at `path`.
-        """
+        """Read one viewer path."""
         folder, _, name = path.partition("/")
         if path in ("index.json", "verdicts.json"):
             data = self.index if path == "index.json" else read_verdicts(self.run_dir)
@@ -145,11 +135,7 @@ class ObjectBundle:
         return self._png(int(stem)), "image/png"
 
     def paths(self) -> Iterator[str]:
-        """List every path the viewer can ask this list for.
-
-        Yields:
-            Each path.
-        """
+        """List every path the viewer can ask this list for."""
         yield "index.json"
         yield "verdicts.json"
         for i in range(len(self.tiles)):
@@ -159,14 +145,7 @@ class ObjectBundle:
 
 
 def export(bundle: ObjectBundle, out_dir: Path, app_dir: Path | None = None) -> int:
-    """Write the list under out_dir/run/, with the viewer app beside it when given.
-
-    Returns:
-        How many files were written.
-
-    Raises:
-        SystemExit: If out_dir holds anything but an earlier export.
-    """
+    """Write the list under out_dir/run/, with the viewer app beside it when given."""
     out_dir = Path(out_dir)
     run_out = out_dir / "run"
     if (
@@ -200,13 +179,7 @@ def export(bundle: ObjectBundle, out_dir: Path, app_dir: Path | None = None) -> 
 
 
 def add_site_meta(bundle: ObjectBundle, out_dir: Path, site_url: str) -> None:
-    """Make an exported list findable once it's hosted at `site_url`.
-
-    It names the list in index.html's title and description for crawlers that don't
-    run scripts, adds the canonical URL, JSON-LD and a social card cut from the field
-    around the top object, and writes a sitemap.xml. There is no robots.txt, as one
-    does nothing below the domain's root.
-    """
+    """Make an exported list findable once it's hosted at `site_url`."""
     out_dir = Path(out_dir)
     url = site_url.rstrip("/") + "/"
     run = bundle.index["run"]
@@ -321,14 +294,7 @@ def _card_start(lit: npt.NDArray[np.floating[Any]], centre: float, length: int) 
 def lit_span(
     lit: npt.NDArray[np.floating[Any]], centre: float, length: int
 ) -> tuple[int, int]:
-    """Find the run of indices around `centre` that is lit, 5 at a time.
-
-    Lit means at least a quarter as bright as the median.
-
-    Returns:
-        The run's start and end, or the whole axis when that run is shorter than
-        `length`.
-    """
+    """Find the run of indices around `centre` that is lit, 5 at a time."""
     good = np.convolve(lit, np.ones(5) / 5, mode="same") >= 0.25 * np.median(lit)
     i = min(max(int(centre), 0), len(lit) - 1)
     if not good[i]:
@@ -342,14 +308,7 @@ def lit_span(
 
 
 def main(cfg: Config, argv: list[str]) -> int:
-    """Serve a list in the viewer, or export it as a static site.
-
-    Returns:
-        0.
-
-    Raises:
-        SystemExit: When the list hasn't been written yet.
-    """
+    """Serve a list in the viewer, or export it as a static site."""
     p = argparse.ArgumentParser(prog="jwst-peculiar view CONFIG")
     p.add_argument(
         "--list",

@@ -1,17 +1,4 @@
-"""`cut`: find the objects in each field, measure them and cut their stamps.
-
-Detection is on one band (F277W by default), with a 64-pixel background, a
-Gaussian of FWHM 2 pixels, sources at 1.5 sigma over 10 pixels, and deblending at
-32 levels with contrast 0.005. Every segment is measured in 0.1" and 0.25"
-apertures in every band, with errors scaled by how much more blank-sky apertures
-scatter than the RMS map says. Segments with area 60 or more, S/N over 40 and
-semimajor axis over 0.12" get a 224-pixel colour stamp and the artefact tests in
-`flags`, and the small ones, with F444W's detections that F277W lacks, go to
-`compact`.
-
-Each field is held in memory whole, so a mosaic too big for that is cut in
-tiles, which `init` sets up and `check` sizes.
-"""
+"""`cut`: find the objects in each field, measure them and cut their stamps."""
 
 from __future__ import annotations
 
@@ -46,6 +33,7 @@ from jwst_peculiar.config import (
     BYTES_PER_PIXEL,
     EMPTY,
     MESH,
+    arcsec_per_pixel,
     memory_size,
     sky_wcs,
     split_tile,
@@ -115,14 +103,7 @@ class PatientSession(requests.Session):
 def asinh_to_uint8(
     img: npt.NDArray[np.floating[Any]], lo: float, hi: float, *, asinh_q: float = 10.0
 ) -> npt.NDArray[np.uint8]:
-    """Stretch flux to 8 bits through an asinh between fixed limits.
-
-    NaN, and the zero fill some mosaics use for the same thing, become the bottom of
-    the stretch.
-
-    Returns:
-        The stretched image.
-    """
+    """Stretch flux to 8 bits through an asinh between fixed limits."""
     flux = np.asarray(img, dtype=np.float32)
     flux = np.where(np.isfinite(flux) & (flux != 0), flux, np.float32(0))
     x = np.clip((flux - lo) / (hi - lo + 1e-12), 0.0, 1.0)
@@ -134,11 +115,7 @@ def asinh_to_uint8(
 
 
 def wcs_record(wcs: SkyWcs) -> tuple[dict[str, Any], float]:
-    """Return a WCS as the header cards the viewer reads, and its pixel scale.
-
-    Returns:
-        The cards, and arcseconds per pixel.
-    """
+    """Return a WCS as the header cards the viewer reads, and its pixel scale."""
     cd = wcs.pixel_scale_matrix
     record = {
         "CTYPE1": wcs.wcs.ctype[0],
@@ -152,8 +129,7 @@ def wcs_record(wcs: SkyWcs) -> tuple[dict[str, Any], float]:
         "CD2_1": float(cd[1, 0]),
         "CD2_2": float(cd[1, 1]),
     }
-    scale = np.sqrt(abs(np.linalg.det(cd))) * 3600
-    return record, round(float(scale), 5)
+    return record, round(arcsec_per_pixel(wcs), 5)
 
 
 @dataclass
@@ -192,14 +168,7 @@ def _read(path: Path, hdu: int | str, box: Box | None) -> tuple[Any, Any]:
 
 
 def read_band(path: Path, hdu: int | str, box: Box | None = None) -> Band:
-    """Read a mosaic, or the box x0, x1, y0, y1 of one, less its background.
-
-    Returns:
-        The band.
-
-    Raises:
-        SystemExit: When the mosaic can't be read, usually as it's cut short.
-    """
+    """Read a mosaic, or the box x0, x1, y0, y1 of one, less its background."""
     raw, header = _read(path, hdu, box)
     factor = to_mjy_sr(header) or 1.0
     if factor != 1:
@@ -207,7 +176,7 @@ def read_band(path: Path, hdu: int | str, box: Box | None = None) -> Band:
     wcs = sky_wcs(header)
     off = ~np.isfinite(raw) | (raw == 0)
     z = np.where(off, 0, raw).astype(np.float32)
-    scale = float(np.sqrt(abs(np.linalg.det(wcs.pixel_scale_matrix))) * 3600)
+    scale = arcsec_per_pixel(wcs)
     roll = float(header["PA_V3"]) if "PA_V3" in header else None
     try:
         bkg = Background2D(
@@ -236,14 +205,7 @@ def _parents(
 
 
 def detect(band: Band) -> tuple[pd.DataFrame, npt.NDArray[np.int32]]:
-    """Find and deblend sources, and say which parent each piece came from.
-
-    Returns:
-        One row per segment, and the deblended segmentation map.
-
-    Raises:
-        NoData: When the band has no sources at all.
-    """
+    """Find and deblend sources, and say which parent each piece came from."""
     off = np.isnan(band.data)
     if off.all():
         msg = "The detect band has no data here."
@@ -279,14 +241,7 @@ def detect(band: Band) -> tuple[pd.DataFrame, npt.NDArray[np.int32]]:
 def blank_sky(
     segmap: npt.NDArray[np.int32], band: Band, *, n: int = 2000, clear: float = 0.5
 ) -> tuple[Floats, Floats]:
-    """Return sky positions at least `clear` arcsec from any segment or uncovered pixel.
-
-    Returns:
-        RA and Dec in degrees.
-
-    Raises:
-        SystemExit: When the field has too little empty sky to measure noise on.
-    """
+    """Return sky positions `clear` arcsec from any segment or uncovered pixel."""
     rng = np.random.default_rng(0)
     k = int(np.ceil(clear / band.scale))
     busy = maximum_filter((segmap > 0) | np.isnan(band.data), size=2 * k + 1)
@@ -313,14 +268,8 @@ def _sums(band: Band, xy: Floats, r: float) -> tuple[Floats, Floats, Bools]:
 
 
 def noise_factor(band: Band, blank: Floats, r: float) -> float:
-    """Return how much more blank-sky apertures scatter than the RMS map predicts.
-
-    Drizzled pixels are correlated, so the map alone understates aperture noise.
-
-    Returns:
-        1.4826 times the median absolute deviation of the blank fluxes, over
-        their median predicted noise.
-    """
+    """Return how much more blank-sky apertures scatter than the RMS map predicts."""
+    # drizzled pixels are correlated, so the map alone understates aperture noise
     flux, noise, bad = _sums(band, blank, r)
     ok = ~bad & (noise > 0)
     spread = 1.4826 * np.median(np.abs(flux[ok] - np.median(flux[ok])))
@@ -328,11 +277,7 @@ def noise_factor(band: Band, blank: Floats, r: float) -> float:
 
 
 def photometry(t: pd.DataFrame, band: Band, *, name: str, blank: Floats) -> str:
-    """Add one band's aperture fluxes and errors to `t`, in nJy.
-
-    Returns:
-        The noise factors, for the log.
-    """
+    """Add one band's aperture fluxes and errors to `t`, in nJy."""
     njy = band.scale**2 * NJY_PER_MJY_SR_ARCSEC2
     xy = np.column_stack(band.pixels(t.ra.to_numpy(float), t.dec.to_numpy(float)))
     bxy = np.column_stack(band.pixels(blank[:, 0], blank[:, 1]))
@@ -349,13 +294,7 @@ def photometry(t: pd.DataFrame, band: Band, *, name: str, blank: Floats) -> str:
 
 
 def render(rgb: Floats) -> npt.NDArray[np.uint8]:
-    """Turn a (3, N, N) flux stamp into uint8, asinh in total brightness.
-
-    Stretching the total rather than each band keeps colour in the core.
-
-    Returns:
-        The stamp, (N, N, 3).
-    """
+    """Turn a (3, N, N) flux stamp into uint8, asinh in total brightness."""
     edge = np.ones((N, N), bool)
     edge[N // 10 : -N // 10, N // 10 : -N // 10] = False
     rgb = rgb - np.nanmedian(rgb[:, edge], axis=1)[:, None, None]
@@ -375,21 +314,15 @@ def _rgb(colour: list[Band], centre: tuple[float, float], h: float) -> Floats:
     corners = green.wcs.pixel_to_world([x, x + h, x], [y, y, y + h])
     gx, gy = FINE
     own = map_coordinates(green.raw, [y + gy * h, x + gx * h], order=1)
-    red = map_coordinates(
-        colour[0].raw, stamp_pixels(colour[0], corners, FINE), order=1
-    )
-    blue = map_coordinates(
-        colour[2].raw, stamp_pixels(colour[2], corners, FINE), order=1
+    red, blue = (
+        map_coordinates(b.raw, stamp_pixels(b, corners, FINE), order=1)
+        for b in (colour[0], colour[2])
     )
     return np.stack([red, own, blue]).astype(float)
 
 
 def stamps(t: pd.DataFrame, colour: list[Band]) -> tuple[npt.NDArray[np.uint8], Bools]:
-    """Cut one colour stamp per object on the middle band's pixel grid.
-
-    Returns:
-        The stamps, (n, N, N, 3) uint8, and which objects got one.
-    """
+    """Cut one colour stamp per object on the middle band's pixel grid."""
     green = colour[1]
     xs, ys = green.pixels(t.ra.to_numpy(float), t.dec.to_numpy(float))
     hs = t.half.to_numpy(float) / green.scale
@@ -420,14 +353,7 @@ def outshone(cut: npt.NDArray[np.uint8]) -> Bools:
 
 
 def gaia_stars(cfg: Config, name: str, t: pd.DataFrame) -> pd.DataFrame:
-    """Return Gaia DR3 sources to G 21 over the field, cached in the run folder.
-
-    Returns:
-        Position, G magnitude and star probability, one row per source.
-
-    Raises:
-        SystemExit: When Gaia's archive can't be reached and there's no cache.
-    """
+    """Return Gaia DR3 sources to G 21 over the field, cached in the run folder."""
     cols = ["ra", "dec", "phot_g_mean_mag", "classprob_dsc_combmod_star"]
     if cfg.gaia is False:
         return pd.DataFrame({c: [] for c in cols}, dtype=float)
@@ -446,14 +372,7 @@ def gaia_stars(cfg: Config, name: str, t: pd.DataFrame) -> pd.DataFrame:
 
 
 def _query_gaia(q: str, name: str) -> pd.DataFrame:
-    """Run a query on each of GAIA_TAP in turn, trying again after each of GAIA_WAITS.
-
-    Returns:
-        The rows.
-
-    Raises:
-        SystemExit: When the last try fails too.
-    """
+    """Run a query on each of GAIA_TAP in turn, retrying after each of GAIA_WAITS."""
     errors: list[Exception] = []
     for wait in (0, *GAIA_WAITS):
         time.sleep(wait)
@@ -530,14 +449,7 @@ def _own(
 
 
 def measure(cfg: Config, name: str) -> Measured:
-    """Detect every segment in a field or tile and measure it in every band.
-
-    Returns:
-        The segments and everything they were found and measured with.
-
-    Raises:
-        NoData: When the field or tile has no sources of its own.
-    """
+    """Detect every segment in a field or tile and measure it in every band."""
     boxes = cfg.boxes(name) or {}
     bands = {
         b: read_band(cfg.band_path(name, b), cfg.hdu, boxes.get(b)) for b in cfg.bands
@@ -561,14 +473,7 @@ def measure(cfg: Config, name: str) -> Measured:
 
 
 def red_only(cfg: Config, name: str, m: Measured) -> pd.DataFrame:
-    """Return F444W's segments whose centre isn't on a detection-band segment of S/N 10.
-
-    Their labels and parents get a million added so they never meet the detection
-    band's.
-
-    Returns:
-        The segments, measured in every band like the detection band's.
-    """
+    """Return F444W's segments not centred on a detection-band segment of S/N 10."""
     red = m.bands[compact.RED]
     t, redmap = detect(red)
     x, y = m.bands[cfg.detect].pixels(t.ra.to_numpy(float), t.dec.to_numpy(float))
@@ -640,17 +545,8 @@ def _unflagged(t: pd.DataFrame) -> int:
 
 
 def cut_field(cfg: Config, name: str, *, redo: bool = False) -> str:
-    """Detect, measure, flag and cut one field into the run folder.
-
-    A field already cut keeps its stamps and only gets the compact candidates it
-    lacks, so its embeddings stay good.
-
-    Returns:
-        A line for the log.
-
-    Raises:
-        SystemExit: When a whole mosaic has no sources.
-    """
+    """Detect, measure, flag and cut one field into the run folder."""
+    # a field already cut keeps its stamps, so its embeddings stay good
     out = cfg.out / "fields" / name
     try:
         m = measure(cfg, name)
@@ -676,13 +572,7 @@ def cut_field(cfg: Config, name: str, *, redo: bool = False) -> str:
 
 
 def fitting_workers(cfg: Config, names: list[str]) -> int:
-    """Return how many fields to cut at once, a core in four and half the memory.
-
-    4 at once took 4 COSMOS-Web fields from 197 seconds to 68 on 16 threads.
-
-    Returns:
-        1 or more.
-    """
+    """Return how many fields to cut at once, a core in four and half the memory."""
     if len(names) <= 1:
         return 1
     need = BYTES_PER_PIXEL * max(cfg.pixels(n) for n in names)
@@ -691,16 +581,7 @@ def fitting_workers(cfg: Config, names: list[str]) -> int:
 
 
 def main(cfg: Config, argv: list[str]) -> int:
-    """Cut every field that hasn't been cut yet.
-
-    A field that fails doesn't stop the rest, so one run shows every failure.
-
-    Returns:
-        0.
-
-    Raises:
-        SystemExit: When any field failed, naming them.
-    """
+    """Cut every field that hasn't been cut yet."""
     p = argparse.ArgumentParser(prog="jwst-peculiar cut CONFIG")
     p.add_argument("--redo", action="store_true", help="cut fields already cut again")
     p.add_argument(

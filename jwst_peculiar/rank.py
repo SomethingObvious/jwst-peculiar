@@ -1,13 +1,7 @@
 """`rank`, `like` and `label`: rarity, search by example and the label model.
 
-An object's rarity is one minus the cosine similarity to its fifth nearest object
-that shares no sky with it, so the other crops of one galaxy never vouch for each
-other. Flagged objects are left out. Once there are labels, `label` fits a
-three-class logistic regression (bad, ordinary, worth a look) on the embeddings and
-`rank` multiplies rarity by the chance an object is worth a look. Ranks count
-systems: an object only takes a place when it shares no sky with one placed above.
-`--reference` adds another run's objects as neighbours, so a run of one or two
-fields can be ranked against what a bigger survey says is common.
+Rarity is one minus the cosine similarity to the fifth nearest object that shares no
+sky with it, so the crops of one galaxy never vouch for each other.
 """
 
 from __future__ import annotations
@@ -69,14 +63,7 @@ class Objects:
 
 
 def load(cfg: Config, encoder: str = "nano") -> Objects:
-    """Read every field's objects and embeddings.
-
-    Returns:
-        The objects, each with an `id` of field and segment label.
-
-    Raises:
-        SystemExit: When a field has been cut but not embedded.
-    """
+    """Read every field's objects and embeddings."""
     name = "embeddings.npy" if encoder == "nano" else f"embeddings_{encoder}.npy"
     cats, embs = [], []
     for field in cfg.cut_fields():
@@ -102,14 +89,7 @@ def on_sphere(
     ra: Floats | pd.Series[float] | list[float],
     dec: Floats | pd.Series[float] | list[float],
 ) -> Floats:
-    """Return points on a sphere of radius one radian in arcsec.
-
-    The straight distance between two is their separation in arcsec to well under
-    a millionth at the scale of a stamp, at any RA and Dec, across fields of a run.
-
-    Returns:
-        (n, 3) positions.
-    """
+    """Return points on a sphere of radius one radian in arcsec."""
     a, d = np.radians(np.asarray(ra, float)), np.radians(np.asarray(dec, float))
     unit = np.column_stack([np.cos(d) * np.cos(a), np.cos(d) * np.sin(a), np.sin(d)])
     return np.asarray(unit * np.degrees(1) * 3600, float)
@@ -132,11 +112,7 @@ class Sky:
         return [int(j) for j, dj, lj in zip(hits, d, lim, strict=True) if dj < lj]
 
     def unique(self, order: npt.NDArray[np.intp], n: int) -> list[int]:
-        """Walk an ordering and keep the first object of each system, up to `n`.
-
-        Returns:
-            The kept objects, in order.
-        """
+        """Walk an ordering and keep the first object of each system, up to `n`."""
         keep: list[int] = []
         taken: set[int] = set()
         for i in order:
@@ -156,13 +132,7 @@ def rarity(
     block: int = 1024,
     ref: npt.NDArray[np.float32] | None = None,
 ) -> Floats:
-    """Return one minus the cosine to the K-th nearest object sharing no sky.
-
-    `ref` holds more neighbours, from elsewhere on the sky, after the rows of `e`.
-
-    Returns:
-        One value per row.
-    """
+    """Return one minus the cosine to the K-th nearest object sharing no sky."""
     others = e if ref is None else np.concatenate([e, ref])
     if len(others) <= 1:
         return np.ones(len(e))
@@ -188,11 +158,7 @@ def read_labels(cfg: Config) -> pd.DataFrame:
 
 
 def fit(e: npt.NDArray[np.float32], y: npt.NDArray[np.intp]) -> dict[str, Any]:
-    """Fit the label model, a balanced multinomial logistic regression with C 0.1.
-
-    Returns:
-        Its weights, as arrays an npz can hold.
-    """
+    """Fit the label model, a balanced multinomial logistic regression with C 0.1."""
     clf = LogisticRegression(C=0.1, class_weight="balanced", max_iter=5000).fit(e, y)
     return {"coef": clf.coef_, "intercept": clf.intercept_, "classes": clf.classes_}
 
@@ -207,11 +173,7 @@ def p_worth(model: dict[str, Any], e: npt.NDArray[np.float32]) -> Floats:
 
 
 def reference(obj: Objects, other: Objects) -> npt.NDArray[np.float32]:
-    """Return the embeddings of another run's neighbours, less any on this run's sky.
-
-    Returns:
-        One row per object in the other run's pool that no object here overlaps.
-    """
+    """Return the embeddings of another run's neighbours, less any on this run's sky."""
     sky = Sky(obj.t)
     pool = other.t.loc[other.pool]
     xy = on_sphere(pool.ra, pool.dec)
@@ -224,11 +186,7 @@ def reference(obj: Objects, other: Objects) -> npt.NDArray[np.float32]:
 def scores(
     cfg: Config, obj: Objects, ref: npt.NDArray[np.float32] | None = None
 ) -> tuple[Floats, Floats | None]:
-    """Return rarity, and rarity times the chance of worth a look if there's a model.
-
-    Returns:
-        Rarity per object, and the weighted score or None.
-    """
+    """Return rarity, and rarity times the chance of worth a look if there's a model."""
     pool = obj.pool
     rar = np.full(len(pool), -np.inf)
     sky = Sky(obj.t.loc[pool].reset_index(drop=True))
@@ -241,11 +199,7 @@ def scores(
 
 
 def ranked(cfg: Config, obj: Objects, score: Floats, *, n: int) -> list[int]:
-    """Return the top `n` systems by `score`, leaving out flagged and known objects.
-
-    Returns:
-        One object per system, best first.
-    """
+    """Return the top `n` systems by `score`, leaving out flagged and known objects."""
     lab = read_labels(cfg)
     known = obj.t.id.isin(set(lab.id[lab.label == "known"])).to_numpy()
     shown = np.where(obj.flagged | known, -np.inf, score)
@@ -265,14 +219,7 @@ def write_list(cfg: Config, obj: Objects, score: Floats, *, n: int) -> Path:
 
 
 def write_sample(cfg: Config, obj: Objects, score: Floats, *, n: int) -> Path:
-    """Write `n` systems drawn at random from places 101 to 2,000 to sample.csv.
-
-    The label model learns what ordinary looks like from these, which the top of the
-    list alone doesn't show it. Systems that already have a verdict are skipped.
-
-    Returns:
-        The file written.
-    """
+    """Write `n` systems drawn at random from places 101 to 2,000 to sample.csv."""
     judged = set(read_labels(cfg).id)
     order = ranked(cfg, obj, score, n=SAMPLE_TO)
     pool = [
@@ -323,11 +270,7 @@ def rank_main(cfg: Config, argv: list[str]) -> int:
 
 
 def find(obj: Objects, sky: Sky, seed: str) -> int:
-    """Return the row of a seed given as FIELD:LABEL, or RA,DEC within 1 arcsec.
-
-    Raises:
-        SystemExit: When no object matches.
-    """
+    """Return the row of a seed given as FIELD:LABEL, or RA,DEC within 1 arcsec."""
     if ":" in seed:
         hit = np.flatnonzero(obj.t.id.to_numpy() == seed)
         if len(hit):
@@ -361,14 +304,7 @@ def like_main(cfg: Config, argv: list[str]) -> int:
 
 
 def label_main(cfg: Config, argv: list[str]) -> int:
-    """Fit the label model on the verdicts given in the viewer, and save it in the run.
-
-    Returns:
-        0.
-
-    Raises:
-        SystemExit: When there are too few labels of each kind to fit on.
-    """
+    """Fit the label model on the viewer's verdicts and save it in the run."""
     p = argparse.ArgumentParser(prog="jwst-peculiar label CONFIG")
     p.parse_args(argv)
     obj = load(cfg)

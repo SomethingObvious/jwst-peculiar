@@ -1,7 +1,6 @@
 """`unzip FOLDER`: expand every .gz mosaic in a folder and delete the .gz.
 
-astropy can read a .fits.gz directly, but it can't memory-map one, so a big mosaic
-would have to fit in RAM.
+astropy can't memory-map a .fits.gz, so a big one would have to fit in RAM.
 """
 
 from __future__ import annotations
@@ -13,11 +12,7 @@ import shutil
 
 
 def decompress_dir(base_dir: Path) -> int:
-    """Expand each x.gz in `base_dir` to x and delete x.gz.
-
-    Returns:
-        How many archives there were.
-    """
+    """Expand each x.gz in `base_dir` to x and delete x.gz."""
     gz_paths = sorted(base_dir.glob("*.gz"))
     for gz_path in gz_paths:
         print(f"expanding {gz_path.name}", flush=True)

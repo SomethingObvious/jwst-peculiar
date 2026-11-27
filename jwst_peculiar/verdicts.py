@@ -12,12 +12,7 @@ _FIELDS = ["key", "verdict", "star", "note", "updated"]
 
 
 def read_verdicts(run_dir: Path) -> dict[str, dict[str, Any]]:
-    """Read the verdicts saved in a run folder.
-
-    Returns:
-        Each judged object's verdict, star, note and when it was saved, along with
-        any columns of your own, or {} without a verdicts.csv.
-    """
+    """Read the verdicts saved in a run folder."""
     path = Path(run_dir) / "verdicts.csv"
     if not path.is_file():
         return {}
@@ -43,17 +38,7 @@ def save_verdict(
     star: bool = False,
     note: str = "",
 ) -> str:
-    """Write one verdict into verdicts.csv.
-
-    It goes through a temporary file and a rename, so a crash mid-write leaves the
-    previous file whole.
-
-    Returns:
-        When the verdict was saved, as an ISO 8601 UTC timestamp.
-
-    Raises:
-        ValueError: `verdict` isn't one of VERDICTS or None.
-    """
+    """Write one verdict into verdicts.csv."""
     if verdict is not None and verdict not in VERDICTS:
         msg = f"Unknown verdict {verdict!r}, expected one of {VERDICTS} or null"
         raise ValueError(msg)

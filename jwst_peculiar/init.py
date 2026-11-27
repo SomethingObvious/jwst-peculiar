@@ -1,12 +1,7 @@
 """`init FOLDER CONFIG`: write a config for a folder of NIRCam mosaics.
 
-It reads the filter out of each file name (the last `f` and three or four digits
-followed by w, m or n), takes what comes before it, less any `_nircam` or
-`_clear`, as the field, and keeps the bands every field has. Where the field comes
-after the filter, as in COSMOS-Web DR1's `mosaic_nircam_f277w_COSMOS-Web_60mas_A1`,
-the part of the names that varies is the field. The band nearest
-F277W finds sources and is red, the one nearest F150W is green and the bluest is
-blue. F115W, F150W, F277W and F444W are kept too when there, for the compact list.
+The field is what's left of each file name around its filter, less `_nircam` or
+`_clear`, or the part that varies when the field comes after the filter.
 """
 
 from __future__ import annotations
@@ -42,13 +37,7 @@ def _microns(band: str) -> float:
 
 
 def split_name(name: str) -> tuple[str, str, str] | None:
-    """Split a mosaic's file name into its field, pattern and band.
-
-    Returns:
-        The field, the pattern with {field} and {band} (or {BAND}) in it, and the
-        band in lower case, or None
-        when the name has no filter in it.
-    """
+    """Split a mosaic's file name into its field, pattern and band."""
     hits = list(BAND.finditer(name))
     if not hits:
         return None
@@ -67,11 +56,7 @@ def _nearest(bands: list[str], microns: float) -> str:
 
 
 def colours(bands: list[str]) -> tuple[str, str, str]:
-    """Pick the red, green and blue bands, red also being the one to detect in.
-
-    Returns:
-        The bands nearest F277W and F150W, and the bluest left.
-    """
+    """Pick the red, green and blue bands, red also being the one to detect in."""
     red = _nearest(bands, 2.77)
     green = _nearest([b for b in bands if b != red], 1.5)
     blue = min((b for b in bands if b not in {red, green}), key=_microns)
@@ -123,14 +108,7 @@ def _image_hdu(path: Path) -> int:
 
 
 def guess(folder: Path) -> dict[str, object]:
-    """Work out a config's pattern, bands, detect band and colour from file names.
-
-    Returns:
-        The config's keys, with the pattern relative to the folder's parent.
-
-    Raises:
-        SystemExit: When no file name in the folder carries a NIRCam filter.
-    """
+    """Work out a config's pattern, bands, detect band and colour from file names."""
     seen = _scan(folder)
     if not seen:
         msg = f"No .fits or .fits.gz in {folder} has a filter like f277w in its name."
@@ -182,14 +160,7 @@ def _tile(paths: list[Path], det: Path, hdu: int) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Write a config for a folder of mosaics next to it.
-
-    Returns:
-        0.
-
-    Raises:
-        SystemExit: When the config already exists.
-    """
+    """Write a config for a folder of mosaics next to it."""
     p = argparse.ArgumentParser(prog="jwst-peculiar init FOLDER CONFIG")
     p.add_argument("folder", type=Path, help="the folder of mosaics")
     p.add_argument("config", type=Path, help="the config to write, beside the folder")

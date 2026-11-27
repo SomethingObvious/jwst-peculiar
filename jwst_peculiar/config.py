@@ -1,8 +1,7 @@
 """A survey's YAML config, and what the steps share about fields and tiles.
 
-With `tile` set, each mosaic is cut in squares that many detection-band pixels on a
-side, named `FIELD~ROW-COL`. Each is read with a margin of `OVERLAP` arcsec so an
-object near its edge is whole, and keeps only the objects centred in its own square.
+With `tile` set, each mosaic is cut in squares named `FIELD~ROW-COL`, read with an
+`OVERLAP` margin and keeping only the objects centred in their own square.
 """
 
 from __future__ import annotations
@@ -58,11 +57,7 @@ def memory_size() -> float:
 
 
 def split_tile(name: str) -> tuple[str, tuple[int, int] | None]:
-    """Split a field name into its mosaic and, for a tile, its row and column.
-
-    Returns:
-        The mosaic's field name, and the tile's row and column or None.
-    """
+    """Split a field name into its mosaic and, for a tile, its row and column."""
     field, mark, where = name.partition(TILE_MARK)
     if not mark:
         return field, None
@@ -71,25 +66,19 @@ def split_tile(name: str) -> tuple[str, tuple[int, int] | None]:
 
 
 def sky_wcs(header: Any) -> Any:  # noqa: ANN401 astropy has no types
-    """Return a header's celestial WCS, without astropy's notes on fixing it.
-
-    JWST headers get their dates and observatory place filled in on every read,
-    a line each per band per field, and none of it matters for positions.
-    """
+    """Return a header's celestial WCS, without astropy's notes on fixing it."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", FITSFixedWarning)
         return WCS(header).celestial
 
 
+def arcsec_per_pixel(wcs: SkyWcs) -> float:
+    """Return the side of a WCS's pixels in arcsec."""
+    return float(np.sqrt(abs(np.linalg.det(wcs.pixel_scale_matrix))) * 3600)
+
+
 def to_mjy_sr(header: Any) -> float | None:  # noqa: ANN401 astropy has no types
-    """Return what turns a mosaic's pixels into MJy/sr, going by its BUNIT.
-
-    Flux per pixel, which DJA's mosaics are in, is divided by the pixel's solid
-    angle, so bands on different pixel grids still give the right colours.
-
-    Returns:
-        The factor, or None for a unit it can't convert.
-    """
+    """Return what turns a mosaic's pixels into MJy/sr, going by its BUNIT."""
     try:
         unit = u.Unit(str(header.get("BUNIT", "MJy/sr")))
     except (TypeError, ValueError):
@@ -163,9 +152,7 @@ class Config:
         if core is None:
             return None
         det = sky_wcs(self._header(name, self.detect))
-        pad = OVERLAP / float(
-            np.sqrt(abs(np.linalg.det(det.pixel_scale_matrix))) * 3600
-        )
+        pad = OVERLAP / arcsec_per_pixel(det)
         x0, x1, y0, y1 = core
         xs = np.array([x0 - pad, x1 + pad, x1 + pad, x0 - pad])
         ys = np.array([y0 - pad, y0 - pad, y1 + pad, y1 + pad])
@@ -173,11 +160,7 @@ class Config:
         return {b: _box(self._header(name, b), ra, dec) for b in self.bands}
 
     def cut_fields(self) -> list[str]:
-        """Return the fields to read, the configured ones or every one cut.
-
-        Raises:
-            SystemExit: When there's nothing cut yet, or a configured field isn't.
-        """
+        """Return the fields to read, the configured ones or every one cut."""
         root = self.out / "fields"
         found = sorted(f.name for f in root.iterdir()) if root.is_dir() else []
         names = found
@@ -237,11 +220,7 @@ class Config:
         return out
 
     def mosaics(self) -> list[str]:
-        """Return the mosaics to search, the configured ones or every one on disk.
-
-        Raises:
-            SystemExit: When the pattern finds no detection-band mosaic.
-        """
+        """Return the mosaics to search, the configured ones or every one on disk."""
         if self.fields:
             return list(self.fields)
         pre, post = (
@@ -260,14 +239,7 @@ class Config:
 
 @contextmanager
 def written(path: Path) -> Generator[Path]:
-    """Yield a path beside `path` to write to, moved onto `path` once the block ends.
-
-    Steps skip a field whose output exists, so a file left half-written by Ctrl+C or
-    a full disk would otherwise pass for a finished one.
-
-    Yields:
-        The temporary path, with the same suffix so numpy and pandas keep the name.
-    """
+    """Yield a path beside `path` to write to, moved onto `path` once the block ends."""
     tmp = path.with_name(f"{path.stem}.part{path.suffix}")
     try:
         yield tmp
@@ -335,14 +307,7 @@ def _resolve(path: Path, raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def read_config(path: Path) -> Config:
-    """Read a config, with paths in it taken relative to the config's folder.
-
-    Returns:
-        The config.
-
-    Raises:
-        SystemExit: When the file is missing or isn't a config this can run.
-    """
+    """Read a config, with paths in it taken relative to the config's folder."""
     if not path.is_file():
         msg = f"There's no config at {path}."
         raise SystemExit(msg)

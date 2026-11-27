@@ -1,13 +1,5 @@
 """The `jwst-peculiar` command, one step of the object search at a time.
 
-`cut` detects objects in each field and cuts their stamps, `embed` turns the stamps
-into Zoobot embeddings, `rank` writes the rarity list, `like` finds the objects most
-like a seed, `view` opens a list in the web viewer to judge, and `label` picks a
-sample to judge, whose verdicts train the classifier `rank` weights rarity by.
-`compact` ranks the small sources `cut` leaves without a stamp on their colours,
-`init` writes a config for a folder of mosaics, and `check` says what a config finds
-before any of that runs.
-
 Each step's module is imported only when it runs, so `--help` doesn't wait for torch.
 """
 
@@ -56,11 +48,7 @@ jwst-peculiar STEP CONFIG --help shows a step's own options."""
 
 
 def run(cfg: Config, rest: list[str]) -> int:
-    """Check, cut, embed, rank and list compact sources, stopping at a failed step.
-
-    Returns:
-        The first nonzero exit code, or 0.
-    """
+    """Check, cut, embed, rank and list compact sources, stopping at a failed step."""
     steps = [("check", []), ("cut", rest), ("embed", []), ("rank", ["rank"])]
     if import_module("jwst_peculiar.compact").has_bands(cfg):
         steps.append(("compact", []))

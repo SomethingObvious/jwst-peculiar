@@ -1,48 +1,7 @@
-"""The compact branch: small sources without a stamp, ranked on how rare they look.
+"""The compact branch: sources too small for a stamp, ranked on how rare they look.
 
-`cut` writes each field's compact candidates to compact.csv. A candidate is
-a segment with S/N 10 or more and a semimajor axis of 0.12" or less or an area
-under 60 pixels, found in F277W, or in F444W where F277W has no segment of S/N 10
-there, as little red dots and brown dwarfs are brightest in F444W. Each gets these
-tests as `flag_*` columns.
-
-- `uncovered`: an aperture reaches uncovered sky.
-- `edge`: uncovered sky within 1" in any band, where a mosaic's edge has fewer
-  exposures and more noise.
-- `line`: in some band, a thin straight line running through it from 0.4" to 1.5"
-  on both sides, 4 sigma brighter than the sky 0.25" either side of it and at least
-  a fifth of its centre, which is a trail, a stripe or a star's spike. A star's own
-  spikes are far fainter than its centre, and a galaxy is wider than the gap.
-- `one_band`: under 3 sigma in all but one band in the 0.1" aperture, or a one-band
-  peak, its best band at S/N 10 or more and every other under max(4, a twentieth).
-  A faint red candidate, brightest in F444W and at 2 sigma in F277W with that light
-  centred, is seen in both.
-- `sharp`: more of its flux in 0.1" than a star has, by 3 sigma in one band or
-  combined, which is a cosmic ray or hot pixel.
-- `one_pair`: seen in only one of NIRCam's two exposure pairs.
-- `dark_middle`: a band under S/N 1 between two at S/N 3 or more.
-- `listed_star`: a listed star brighter in F150W than F444W within 0.3", or within
-  2" of a star 20 times brighter in F277W, listed or one of the field's segments at
-  S/N 100 as concentrated as a star. Cool brown dwarfs are redder, so they stay.
-- `blue_star`: a point source in F150W at least a magnitude brighter there than in
-  F277W and half a magnitude brighter in F277W than F444W, a star too faint for Gaia.
-- `gaia`: within 0.3" of a Gaia star's spikes or halo.
-- `piece`: a deblended piece of a stamped object's parent, inside its stamp.
-- `row`: one of three like dots in an evenly spaced row within 1.2", counting
-  F277W and F444W together, as a moving source leaves a row of dots that are
-  sometimes in both bands and sometimes split between them. It caught all 10 such
-  artefacts in UNCOVER and 16 of 27 in JADES, and none of their 57 known little red
-  dots. Most of the rest are two dots, which this can't tell from a close pair.
-- `pixel`: a lone peak by `flags.blobs` within 0.25" plus 1.5 of that band's
-  pixels (beyond 0.1" for an F444W peak on a faint red candidate), or a pixel 5
-  sigma under the sky as near in F277W and F444W and within 0.1" plus 1.5 pixels in
-  F115W and F150W, as only the 0.1" flux of those is ranked.
-
-`compact` fits a 20-component Gaussian mixture to the unflagged candidates'
-three colours and two concentrations, and ranks them on minus the log density with
-each candidate's own errors added to every component, averaged over three fits with
-different seeds. Two single fits share about 84 of their top 100 on COSMOS-Web, and
-two averages of three share 92.
+`cut` writes each field's candidates and their `flag_*` tests to compact.csv, and
+`compact` ranks the unflagged ones under a Gaussian mixture averaged over three seeds.
 """
 
 from __future__ import annotations
@@ -86,43 +45,34 @@ if TYPE_CHECKING:
 BANDS = ("f115w", "f150w", "f277w", "f444w")
 # F444W's own detections get labels past this, clear of the detection band's
 RED, OFFSET = "f444w", 1_000_000
-# what counts as a candidate
 MIN_SN, MAX_A, MAX_AREA = 10.0, 0.12, 60
-# one_band, and the faint red candidate it spares
+# one_band, and the faint red candidate it lets through
 PEAK_SN, PEAK_FLOOR, PEAK_SHARE = 10.0, 4.0, 20.0
 NEXT, RED_SEEN, RED_CENTRED = "f277w", 2.0, 0.3
 # blue_star: F150W's 0.1" over 0.25" flux for a point source, and the flux ratios
 # F150W over F277W and F277W over F444W a star is brighter than (1 and 0.5 mag)
 STAR_POINT, STAR_FALL = (0.75, 1.2), (10**0.4, 10**0.2)
-# sharp: the 99th percentile of 0.1" over 0.25" flux for 742 Gaia stars, G 19 to
-# 21, S/N over 30
+# sharp: the 99th percentile of 0.1" over 0.25" flux for 742 Gaia stars
 PSF_SHARPEST = {"f115w": 0.88, "f150w": 0.865, "f277w": 0.70, "f444w": 0.61}
 SHARP_SIG, SHARP_FLOOR = 3.0, 5.0
 # one_pair, as NIRCam takes F115W with F277W, then F150W with F444W, at one dither
 PAIRS = (("f115w", "f277w"), ("f150w", "f444w"))
 SEEN, UNSEEN = 5.0, 2.0
-# dark_middle
 DARK_SEEN, DARK = 3.0, 1.0
 # listed_star, and the 0.3" gaia uses too
 POINT, HALO_REACH, HALO_RATIO = 0.3, 2.0, 20.0
-# a segment concentrated like a star, which 97% of COSMOS-Web's 911 listed stars
-# over S/N 100 pass, and 213 unlisted sources
+# a segment concentrated like a star, as 97% of COSMOS-Web's bright listed stars are
 POINT_SN, POINT_F150W, POINT_F277W = 100.0, 0.75, (0.5, 0.8)
-# pixel
 NEG_SIG, APERTURE, BLOCK = 5.0, 0.25, 1.5
 # the bands whose 0.25" flux the ranking reads, and the aperture every band has
 CONCENTRATED, INNER = ("f277w", "f444w"), 0.1
-# edge, in arcsec
 EDGE = 1.0
 # line, where a median of n pixels has 1.2533 times the noise of their mean
 LINE_IN, LINE_OUT, LINE_SIDE = 0.4, 1.5, 0.25
 LINE_SIG, LINE_SHARE, MEDIAN_NOISE = 4.0, 0.2, 1.2533
-# row: F277W and F444W peaks at 4 sigma after a 1-pixel Gaussian, one peak where
-# they're within 0.12", 0.2" to 1.2" out and within 3 times the candidate's
-# significance, on a line evenly spaced to 0.1", as peaks fall on whole 0.04" pixels
+# row: 4 sigma peaks 0.2" to 1.2" out, evenly spaced to 0.1" as peaks sit on pixels
 ROW_SIG, ROW_SAME, ROW_IN, ROW_OUT = 4.0, 0.12, 0.2, 1.2
 ROW_LIKE, ROW_TOL = 3.0, 0.1
-# the ranking
 COMPONENTS, FITS = 20, 3
 LIST, STAMPS = "compact.csv", "compact_stamps.npy"
 # each listed candidate's stamp, 2.4" across at twice 112 pixels
@@ -146,16 +96,7 @@ def _snr(t: pd.DataFrame, band: str) -> Floats:
 
 
 def blue_star(t: pd.DataFrame) -> Bools:
-    """Return which candidates are point sources with a star's falling spectrum.
-
-    A star too faint for Gaia is a magnitude or more brighter in F150W than F277W
-    and brighter again in F277W than F444W. Brown dwarfs and little red dots are
-    the other way round in F277W and F444W. Of 1268 labelled COSMOS-Web candidates
-    it caught 8 stars and 2 ordinary objects and nothing worth a look.
-
-    Returns:
-        One flag per candidate.
-    """
+    """Return which candidates are point sources with a star's falling spectrum."""
     f150, f277, f444 = (t[f"f_{b}_10"].to_numpy(float) for b in BANDS[1:])
     with np.errstate(divide="ignore", invalid="ignore"):
         point = f150 / t.f_f150w_25.to_numpy(float)
@@ -170,15 +111,7 @@ def blue_star(t: pd.DataFrame) -> Bools:
 
 
 def faint_red(t: pd.DataFrame) -> Bools:
-    """Return which candidates are brightest in F444W and seen at 2 sigma in F277W.
-
-    The F277W light has to be centred, at least 0.3 of the 0.25" flux inside 0.1",
-    as an F444W hot pixel on a galaxy's outskirts gets its 2 sigma from the galaxy.
-    Known little red dots have 0.43 or more and those hot pixels 0.09 to 0.22.
-
-    Returns:
-        One flag per candidate.
-    """
+    """Return which candidates are brightest in F444W and seen at 2 sigma in F277W."""
     z = np.column_stack([_snr(t, b) for b in BANDS])
     top = z.argmax(axis=1) == BANDS.index(RED)
     inner, outer = t[f"f_{NEXT}_10"].to_numpy(float), t[f"f_{NEXT}_25"].to_numpy(float)
@@ -187,15 +120,7 @@ def faint_red(t: pd.DataFrame) -> Bools:
 
 
 def one_band(t: pd.DataFrame) -> Bools:
-    """Return which candidates show in only one band, or are a one-band peak.
-
-    Where F444W is the brightest band, F277W at 2 sigma counts as seen, as a little
-    red dot can be 5 times fainter there. 56 of the 66 known ones found only in F444W
-    pass that way, and a lone F444W pixel is that bright in F277W 2% of the time.
-
-    Returns:
-        One flag per candidate.
-    """
+    """Return which candidates show in only one band, or are a one-band peak."""
     z = np.column_stack([_snr(t, b) for b in BANDS])
     red = faint_red(t)
     top, rest = z.max(axis=1), np.sort(z, axis=1)[:, -2]
@@ -235,13 +160,7 @@ def one_pair(t: pd.DataFrame) -> Bools:
 
 
 def dark_middle(t: pd.DataFrame) -> Bools:
-    """Return which candidates have a dark band between two bright ones.
-
-    No smooth spectrum is under S/N 1 in one band and at S/N 3 on both sides of it.
-
-    Returns:
-        One flag per candidate.
-    """
+    """Return which candidates have a dark band between two bright ones."""
     z = np.array([_snr(t, b) for b in BANDS])
     out = np.zeros(len(t), bool)
     for i in range(1, len(BANDS) - 1):
@@ -261,15 +180,7 @@ def point_sources(segments: pd.DataFrame) -> pd.DataFrame:
 
 
 def listed_star(t: pd.DataFrame, stars: pd.DataFrame, segments: pd.DataFrame) -> Bools:
-    """Return which candidates are a blue listed star or in a much brighter star's halo.
-
-    A star's F277W flux is that of the segment within 0.3" of it. Many stars bright
-    in the infrared are fainter than Gaia's G 21, so the list catches what Gaia misses,
-    and the field's own bright point sources count as stars for the halo too.
-
-    Returns:
-        One flag per candidate.
-    """
+    """Return which candidates are a blue listed star or in a bright star's halo."""
     out = np.zeros(len(t), bool)
     if not len(t):
         return out
@@ -324,18 +235,7 @@ def _within(
 
 
 def bad_pixel(t: pd.DataFrame, bands: dict[str, Band], lone: pd.DataFrame) -> Bools:
-    """Return which candidates have a pixel 5 sigma under the sky or a lone peak.
-
-    A pixel counts when it lies within 0.25" plus 1.5 of its band's pixels, since a
-    hot pixel just outside 0.25" still leaks into the 0.063" long-wave aperture. A
-    pixel under the sky in F115W or F150W counts within 0.1", the only aperture of
-    theirs the ranking reads, which kept 6 more of 158 known little red dots. A lone
-    F444W peak within 0.1" of a faint red candidate is its own centre, which was the
-    only reason 31 known little red dots were flagged.
-
-    Returns:
-        One flag per candidate.
-    """
+    """Return which candidates have a pixel 5 sigma under the sky or a lone peak."""
     out = np.zeros(len(t), bool)
     red = faint_red(t)
     for b in BANDS:
@@ -357,13 +257,7 @@ def bad_pixel(t: pd.DataFrame, bands: dict[str, Band], lone: pd.DataFrame) -> Bo
 
 
 def near_edge(t: pd.DataFrame, bands: dict[str, Band]) -> Bools:
-    """Return which candidates have uncovered sky within 1" in any band.
-
-    Uncovered means NaN, exactly 0 or off the end of the mosaic's array.
-
-    Returns:
-        One flag per candidate.
-    """
+    """Return which candidates have uncovered sky within 1" in any band."""
     out = np.zeros(len(t), bool)
     for b in BANDS:
         band = bands[b]
@@ -448,12 +342,7 @@ def _evenness(pts: Floats, sig: Floats) -> float:
 
 
 def in_a_row(t: pd.DataFrame, bands: dict[str, Band]) -> Bools:
-    """Return which candidates are one of three like dots in an evenly spaced row.
-
-    Returns:
-        One flag per candidate.
-    """
-    # A moving source can leave its dots in one band or split between the two.
+    """Return which candidates are one of three like dots in an evenly spaced row."""
     a, b = (_band_peaks(t, bands[name]) for name in CONCENTRATED)
     return np.array(
         [_evenness(*_merged(p, q)) < ROW_TOL for p, q in zip(a, b, strict=True)], bool
@@ -560,14 +449,7 @@ def fit(x: Floats, seed: int = 0) -> Any:  # noqa: ANN401 scikit-learn has no ty
 
 
 def rarity(gmm: Any, x: Floats, xe: Floats) -> Floats:  # noqa: ANN401 scikit-learn has no types
-    """Return minus the log density of each row, its errors added to every component.
-
-    There's no normalising term, as with it a bigger error makes the density lower
-    and so a noisier source rarer.
-
-    Returns:
-        One score per row, higher is rarer.
-    """
+    """Return minus the log density of each row, its errors added to every component."""
     means = np.asarray(gmm.means_, float)
     covs = np.asarray(gmm.covariances_, float)
     weights = np.asarray(gmm.weights_, float)
@@ -597,15 +479,7 @@ def _panel(hdu: tuple[Any, Any, float], at: Any) -> Floats:  # noqa: ANN401 astr
 def tile(
     hdus: dict[str, tuple[Any, Any, float]], ra: float, dec: float
 ) -> npt.NDArray[np.uint8]:
-    """Cut a 2.4" four-panel tile, its first row lowest like the stamps.
-
-    The F444W, F277W, F150W colour panel and F115W sit on top, F277W and F444W
-    below, every panel scaled to its brightest pixel within 0.2" of the centre, as a
-    faint compact source vanishes under a percentile stretch.
-
-    Returns:
-        A (224, 224, 3) uint8 tile.
-    """
+    """Cut a 2.4" four-panel tile, its first row lowest like the stamps."""
     at = SkyCoord(ra * u.deg, dec * u.deg)
     img = {b: _panel(hdus[b], at) for b in BANDS}
     mid = slice(TILE // 2 - TILE // 12, TILE // 2 + TILE // 12)
@@ -622,14 +496,7 @@ def tile(
 
 
 def load(cfg: Config) -> pd.DataFrame:
-    """Read every field's compact candidates.
-
-    Returns:
-        The candidates, each with an `id` of field and segment label.
-
-    Raises:
-        SystemExit: When a field has no compact.csv.
-    """
+    """Read every field's compact candidates."""
     cats = []
     for name in cfg.cut_fields():
         path = cfg.out / "fields" / name / LIST
@@ -649,11 +516,7 @@ def load(cfg: Config) -> pd.DataFrame:
 
 
 def stamps(cfg: Config, top: pd.DataFrame) -> npt.NDArray[np.uint8]:
-    """Cut a tile for every listed candidate, a field at a time.
-
-    Returns:
-        (n, 224, 224, 3) uint8 tiles in list order.
-    """
+    """Cut a tile for every listed candidate, a field at a time."""
     out = np.zeros((len(top), 2 * TILE, 2 * TILE, 3), np.uint8)
     for name, rows in top.groupby("field").indices.items():
         opened: list[FitsHDUList] = [
@@ -677,11 +540,7 @@ def stamps(cfg: Config, top: pd.DataFrame) -> npt.NDArray[np.uint8]:
 
 
 def ranked(t: pd.DataFrame, n: int) -> pd.DataFrame:
-    """Return the `n` rarest unflagged candidates, rarest first.
-
-    Returns:
-        Their ids, places, scores and tile numbers.
-    """
+    """Return the `n` rarest unflagged candidates, rarest first."""
     flagged = t.filter(like="flag_").to_numpy().any(axis=1)
     keep = t.loc[~flagged].reset_index(drop=True)
     keep["score"] = 0.0
@@ -698,14 +557,7 @@ def ranked(t: pd.DataFrame, n: int) -> pd.DataFrame:
 
 
 def main(cfg: Config, argv: list[str]) -> int:
-    """Rank the unflagged compact candidates and cut tiles for the top of the list.
-
-    Returns:
-        0.
-
-    Raises:
-        SystemExit: When the run lacks one of the four bands.
-    """
+    """Rank the unflagged compact candidates and cut tiles for the top of the list."""
     p = argparse.ArgumentParser(prog="jwst-peculiar compact CONFIG")
     p.add_argument("-n", type=int, default=500, help="how many candidates to list")
     a = p.parse_args(argv)

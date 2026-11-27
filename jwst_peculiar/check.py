@@ -1,10 +1,4 @@
-"""`check`: what a config finds, before a long cut.
-
-It lists the fields and any mosaic they lack, the memory `cut` will roughly need
-for the biggest one and the disk the run will, the device `embed` would use,
-whether the Zoobot weights are downloaded yet, and whether the run folder can be
-written.
-"""
+"""`check`: what a config finds, before a long cut."""
 
 from __future__ import annotations
 
@@ -113,11 +107,7 @@ def _memory(cfg: Config, names: list[str], gone: set[str]) -> list[str]:
 
 
 def report(cfg: Config) -> list[str]:
-    """Check a config's fields, mosaics, device, weights and run folder.
-
-    Returns:
-        The problems found, empty when it's ready to run.
-    """
+    """Check a config's fields, mosaics, device, weights and run folder."""
     names = cfg.field_names()
     missing = cfg.missing()
     print(f"{len(names)} fields, bands {', '.join(cfg.bands)}")
@@ -153,11 +143,7 @@ def report(cfg: Config) -> list[str]:
 
 
 def main(cfg: Config, argv: list[str]) -> int:
-    """Print what the config finds and any problem with it.
-
-    Returns:
-        0 when it's ready to run, 1 when there's a problem.
-    """
+    """Print what the config finds and any problem with it."""
     argparse.ArgumentParser(prog="jwst-peculiar check CONFIG").parse_args(argv)
     problems = report(cfg)
     for p in problems:

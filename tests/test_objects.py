@@ -33,6 +33,7 @@ from jwst_peculiar.compact import (
     bad_pixel,
     blue_star,
     dark_middle,
+    in_a_row,
     listed_star,
     near_edge,
     on_line,
@@ -729,6 +730,30 @@ def test_check_says_what_tile_size_would_fit_in_memory(
     ]
 
 
+def test_one_source_repeated_in_an_even_row_is_flagged() -> None:
+    # dots 0.5" apart in a row, the same row split between the bands, a lone dot,
+    # three spaced 0.5" then 0.8", and a red dot with faint F277W dots in a row
+    both = [(60, 60), (72, 72), (84, 84), (150, 50), (150, 150), (162, 162)]
+    both += [(181, 181)]
+    faint = [(150, 100), (162, 112), (174, 124)]
+    rng = np.random.default_rng(5)
+    skies = []
+    for only, red in (([(60, 140), (72, 152)], 8), ([(84, 164)], 80)):
+        sky = rng.normal(0, 1, (200, 200)).astype(np.float32)
+        for x, y in both + only:
+            sky += gaussian(x, y, sigma=1.0, amp=50)
+        sky += gaussian(*faint[0], sigma=1.0, amp=red)
+        if red == 8:
+            for x, y in faint[1:]:
+                sky += gaussian(x, y, sigma=1.0, amp=8)
+        skies.append(band(sky))
+    xs, ys = [72, 60, 60, 150, 150, 150], [72, 60, 140, 50, 150, 100]
+    ra, dec = skies[0].wcs.pixel_to_world_values(xs, ys)
+    t = pd.DataFrame({"ra": ra, "dec": dec})
+    got = in_a_row(t, {"f277w": skies[0], "f444w": skies[1]})
+    assert got.tolist() == [True, True, True, False, False, False]
+
+
 def test_trails_are_flagged_but_spiky_stars_and_galaxies_are_not() -> None:
     y, x = np.mgrid[:200, :200]
     noise = np.random.default_rng(3).normal(0, 1, (200, 200))
@@ -1102,8 +1127,11 @@ def half_blank(tmp_path: Path) -> Config:
     rng = np.random.default_rng(3)
     y, x = np.mgrid[:600, :1500]
     sky = rng.normal(0, 1, (600, 1500)).astype(np.float32)
+    # off a regular grid, which the row test would rightly take for one source repeated
+    jitter = np.random.default_rng(4).uniform(-4, 4, (40, 2))
     for i in range(40):
         x0, y0, r = 30 + 12 * i, 40 + (i * 37) % 520, 2 + i % 5
+        x0, y0 = x0 + jitter[i, 0], y0 + jitter[i, 1]
         sky += 400 * np.exp(-((x - x0) ** 2 + (y - y0) ** 2) / (2 * r**2))
     # and one too small for a stamp in the next tile along
     sky += 30 * np.exp(-((x - 600) ** 2 + (y - 250) ** 2) / (2 * 1.5**2))

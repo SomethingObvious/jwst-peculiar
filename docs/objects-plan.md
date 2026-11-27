@@ -312,3 +312,19 @@ The main lists are mostly mergers, close pairs, clumpy and ringed galaxies and, 
 The compact lists find the little red dots well on both surveys, better than the goals allow for. Their artefacts are mostly one kind the tests don't catch: two or three dots in a short line, sometimes one colour and sometimes a different colour each, which look like a moving object caught in separate exposures. They make up 10 of UNCOVER's 29 and 19 of JADES's 42. The rest are striping, noise and stars, as on COSMOS-Web. A test on the catalogue alone caught 3 of the 29, as in the four measured bands each dot looks like any faint red source. Telling them apart needs where each band's light sits in the images, so that test waits for a survey it can be checked on.
 
 One labeller again, with no second check. The recall figures come from a published catalogue and don't depend on the labels.
+
+### After the Third Test
+
+The moving dots got a test of their own, `flag_row`, worked out on the two surveys' labelled pools, so what follows are development numbers and not a test. Run again with it, UNCOVER's compact top 100 went from 29 artefacts to 25, with none of its moving dots left, and JADES's from 42 to 37, of which 15 are still moving dots and nearly all of those are pairs. Worth a look stayed at 28 in UNCOVER and went from 19 to 21 in JADES. Kocevski's little red dots stayed where they were, except one UNCOVER source that now sits a single place outside the top 5% (1,148 of 22,951). The entries new to each top 100 were labelled from sheets of their own, which means I knew they were new.
+
+The other lever was the label model. Fitted on COSMOS-Web's verdicts and one survey's main labels, it gave the other survey's main top 100 52 worth a look in place of 44 (JADES) and 59 in place of 51 (UNCOVER). Unfortunately it also took COSMOS-Web's development recall of rings in the top 5% from 0.452 to 0.210, and over all classes but lenses from 0.542 to 0.482, much as the second batch of labels did before. So it isn't used, and the main list is as it was.
+
+## A Fourth Test on GOODS-North, Fixed Before It Happens
+
+This was written on 2026-11-27, before anything has run on GOODS-North, and it doesn't change after. Its mosaics have been downloaded and expanded and nothing else.
+
+1. What runs. The package as committed with this section, unchanged between now and the run. The main list uses the COSMOS-Web label model (sha256 starting 4e80acaa) copied into the run folder, as in the third test. The compact list uses its committed rules, `flag_row` among them.
+2. Where. GOODS-North from the DAWN JWST Archive (version 7.4 mosaics, F115W, F150W, F277W and F444W), a survey the tool hasn't seen. It runs whole with `objects run`, tiled as `init` and `check` say.
+3. How it's labelled. The main and compact top 100s go into one list, shuffled with seed 8 and with rank and score taken off, and I label all 200 from numbered contact sheets with the rubric used so far before any published catalogue is matched to them.
+4. What it's judged on. The main list: at least 50 worth a look and at most 5 artefacts in its top 100. The compact list: at most 40 artefacts in its top 100, and of the little red dots from Matthee et al. (2024) in Perger et al.'s (2025) list that fall inside the mosaic, at least 70% in the compact catalogue and at least 60% in its top 5%. There are only 7 of those before coverage, as the big JADES census of both GOODS fields hasn't published its table yet, so that part says little either way. How many moving dots are left in the compact top 100 is reported but isn't a goal.
+5. After it. The numbers are reported as they come out, nothing is tuned on GOODS-North, and it isn't run again.

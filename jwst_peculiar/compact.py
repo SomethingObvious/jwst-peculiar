@@ -28,6 +28,11 @@ tests as `flag_*` columns.
   F277W and half a magnitude brighter in F277W than F444W, a star too faint for Gaia.
 - `gaia`: within 0.3" of a Gaia star's spikes or halo.
 - `piece`: a deblended piece of a stamped object's parent, inside its stamp.
+- `row`: one of three like dots in an evenly spaced row within 1.2", counting
+  F277W and F444W together, as a moving source leaves a row of dots that are
+  sometimes in both bands and sometimes split between them. It caught all 10 such
+  artefacts in UNCOVER and 16 of 27 in JADES, and none of their 57 known little red
+  dots. Most of the rest are two dots, which this can't tell from a close pair.
 - `pixel`: a lone peak by `flags.blobs` within 0.25" plus 1.5 of that band's
   pixels (beyond 0.1" for an F444W peak on a faint red candidate), or a pixel 5
   sigma under the sky as near in F277W and F444W and within 0.1" plus 1.5 pixels in
@@ -54,6 +59,7 @@ import numpy as np
 import pandas as pd
 from photutils.aperture import CircularAperture, aperture_photometry
 from PIL import Image
+from scipy.ndimage import gaussian_filter, maximum_filter
 from scipy.spatial import cKDTree
 from scipy.special import logsumexp
 from sklearn.mixture import GaussianMixture
@@ -111,6 +117,11 @@ EDGE = 1.0
 # line, where a median of n pixels has 1.2533 times the noise of their mean
 LINE_IN, LINE_OUT, LINE_SIDE = 0.4, 1.5, 0.25
 LINE_SIG, LINE_SHARE, MEDIAN_NOISE = 4.0, 0.2, 1.2533
+# row: F277W and F444W peaks at 4 sigma after a 1-pixel Gaussian, one peak where
+# they're within 0.12", 0.2" to 1.2" out and within 3 times the candidate's
+# significance, on a line evenly spaced to 0.1", as peaks fall on whole 0.04" pixels
+ROW_SIG, ROW_SAME, ROW_IN, ROW_OUT = 4.0, 0.12, 0.2, 1.2
+ROW_LIKE, ROW_TOL = 3.0, 0.1
 # the ranking
 COMPONENTS, FITS = 20, 3
 LIST, STAMPS = "compact.csv", "compact_stamps.npy"
@@ -418,6 +429,84 @@ def on_line(t: pd.DataFrame, bands: dict[str, Band], batch: int = 200) -> Bools:
     return out
 
 
+def _evenness(pts: Floats, sig: Floats) -> float:
+    # arcsec the peak nearest the centre and two like peaks are off an evenly spaced row
+    r = np.hypot(*pts.T)
+    if not len(r) or r.min() > ROW_SAME:
+        return np.inf
+    c = int(np.argmin(r))
+    like = (r >= ROW_IN) & (sig >= sig[c] / ROW_LIKE) & (sig <= sig[c] * ROW_LIKE)
+    p = pts[like] - pts[c]
+    best = np.inf
+    for i in range(len(p)):
+        for j in range(len(p)):
+            if i != j:
+                # one either side of it, or two in a row going away from it
+                gap = min(np.hypot(*(p[i] + p[j])), np.hypot(*(p[j] - 2 * p[i])))
+                best = min(best, float(gap))
+    return best
+
+
+def in_a_row(t: pd.DataFrame, bands: dict[str, Band]) -> Bools:
+    """Return which candidates are one of three like dots in an evenly spaced row.
+
+    Returns:
+        One flag per candidate.
+    """
+    # A moving source can leave its dots in one band or split between the two.
+    a, b = (_band_peaks(t, bands[name]) for name in CONCENTRATED)
+    return np.array(
+        [_evenness(*_merged(p, q)) < ROW_TOL for p, q in zip(a, b, strict=True)], bool
+    )
+
+
+def _merged(
+    a: tuple[Floats, Floats], b: tuple[Floats, Floats]
+) -> tuple[Floats, Floats]:
+    # both bands' peaks, one within ROW_SAME of the other counted once at its stronger
+    # significance, as a little red dot can be faint in F277W and bright in F444W
+    if not len(a[0]) or not len(b[0]):
+        return a if len(a[0]) else b
+    d = np.hypot(*(b[0][:, None, :] - a[0][None, :, :]).transpose(2, 0, 1))
+    new = d.min(axis=1) > ROW_SAME
+    sig = a[1].copy()
+    for i, j in zip(np.flatnonzero(~new), d[~new].argmin(axis=1), strict=True):
+        sig[j] = max(sig[j], b[1][i])
+    return np.r_[a[0], b[0][new]], np.r_[sig, b[1][new]]
+
+
+def _band_peaks(t: pd.DataFrame, band: Band) -> list[tuple[Floats, Floats]]:
+    # each candidate's peaks within ROW_OUT, offset in arcsec on the sky, and how strong
+    sm = np.asarray(gaussian_filter(np.nan_to_num(band.data), 1.0), float)
+    top = sm == maximum_filter(sm, 3)
+    to_sky = np.asarray(band.wcs.pixel_scale_matrix, float).T * 3600
+    xs, ys = band.pixels(t.ra.to_numpy(float), t.dec.to_numpy(float))
+    out = []
+    for x, y in zip(xs, ys, strict=True):
+        pix, sig = _peaks(sm, top, (x, y), scale=band.scale)
+        pts = pix @ to_sky
+        near = np.hypot(*pts.T) <= ROW_OUT
+        out.append((pts[near], sig[near]))
+    return out
+
+
+def _peaks(
+    sm: Floats, top: Bools, at: tuple[float, float], *, scale: float
+) -> tuple[Floats, Floats]:
+    # pixel offsets and significance of the peaks at ROW_SIG around `at`
+    n = int(np.ceil(ROW_OUT / scale)) + 2
+    x0, y0 = round(at[0]), round(at[1])
+    ny, nx = sm.shape
+    if not (n <= x0 < nx - n and n <= y0 < ny - n):
+        return np.zeros((0, 2)), np.zeros(0)
+    win = sm[y0 - n : y0 + n + 1, x0 - n : x0 + n + 1]
+    noise = 1.4826 * np.median(np.abs(win - np.median(win)))
+    yy, xx = np.nonzero(
+        top[y0 - n : y0 + n + 1, x0 - n : x0 + n + 1] & (win > ROW_SIG * noise)
+    )
+    return np.c_[xx + x0 - n - at[0], yy + y0 - n - at[1]], win[yy, xx] / noise
+
+
 def compact_flags(  # noqa: PLR0913 every test needs its own input
     t: pd.DataFrame,
     bands: dict[str, Band],
@@ -442,6 +531,7 @@ def compact_flags(  # noqa: PLR0913 every test needs its own input
     t["flag_gaia"] = on_spikes(t.assign(half=POINT), gaia, roll=roll, square=False)
     t["flag_piece"] = piece(t, objects)
     t["flag_pixel"] = bad_pixel(t, bands, lone)
+    t["flag_row"] = in_a_row(t, bands)
 
 
 def _mags(t: pd.DataFrame, ap: str) -> tuple[Floats, Floats]:
@@ -595,7 +685,8 @@ def ranked(t: pd.DataFrame, n: int) -> pd.DataFrame:
     flagged = t.filter(like="flag_").to_numpy().any(axis=1)
     keep = t.loc[~flagged].reset_index(drop=True)
     keep["score"] = 0.0
-    if len(keep):
+    # a mixture needs two candidates to fit
+    if len(keep) > 1:
         x, xe = features(keep)
         keep["score"] = np.mean([rarity(fit(x, s), x, xe) for s in range(FITS)], axis=0)
     cols = ["id", "field", "label", "ra", "dec", "sn", "a_arcsec", "score"]

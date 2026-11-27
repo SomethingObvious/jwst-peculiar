@@ -556,11 +556,9 @@
         <Plate
           bind:this={plate}
           {tile}
-          index={current}
           {data}
           error={tileError}
           {frame}
-          {theme}
           oncursor={(c: { ix: number; iy: number } | null) => (cursor = c)}
         />
       </main>

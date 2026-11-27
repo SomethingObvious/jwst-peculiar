@@ -62,7 +62,7 @@ from jwst_peculiar.cut import (
 )
 from jwst_peculiar.embed import embed, load_encoder, resolve_device
 from jwst_peculiar.embed import main as embed_main
-from jwst_peculiar.flags import blobs, merged, on_spikes
+from jwst_peculiar.flags import blobs, merged, mid_sky, on_spikes
 from jwst_peculiar.init import guess, split_name
 from jwst_peculiar.init import main as init_main
 from jwst_peculiar.rank import (
@@ -70,6 +70,7 @@ from jwst_peculiar.rank import (
     MODEL,
     Objects,
     Sky,
+    find,
     label_main,
     like_main,
     p_worth,
@@ -196,6 +197,26 @@ def test_rarity_ignores_neighbours_that_share_its_sky() -> None:
     assert rar[1] == pytest.approx(0.0, abs=1e-6)
     # every object flagged leaves nothing to compare
     assert len(rarity(e[:0], Sky(t.iloc[:0]))) == 0
+
+
+def test_neighbours_share_sky_anywhere_in_a_run_of_many_fields() -> None:
+    # pairs 0.36" apart across RA 0, at RA 250 opposite most of the run, and at
+    # Dec -73 in a run mostly near the equator
+    pairs = [(359.99995, 0.00005, 0.0), (249.99995, 250.00005, 0.0)]
+    pairs += [(110.0, 110.0 + 0.36 / 3600 / np.cos(np.radians(73)), -73.0)]
+    ra = [r for a, b, _ in pairs for r in (a, b)] + [10.0] * 50 + [130.0] * 50
+    dec = [d for *_, d in pairs for _ in range(2)] + [2.0] * 100
+    t = pd.DataFrame({"ra": ra, "dec": dec, "half": 0.6})
+    t.loc[6:, "ra"] += np.arange(100) * 0.01
+    sky = Sky(t)
+    assert [set(sky.near(i)) for i in (0, 2, 4)] == [{0, 1}, {2, 3}, {4, 5}]
+    # a position that failed to read leaves the middle of the rest
+    one_bad = pd.DataFrame({"ra": [np.nan, 10.0, 10.0002], "dec": 0.0})
+    assert mid_sky(one_bad)[0] == pytest.approx(10.0001)
+    t = t.head(3)
+    sky = Sky(t)
+    objects = Objects(t.assign(id="a"), np.eye(3, dtype=np.float32))
+    assert find(objects, sky, "0.00005,0") == 1
 
 
 def test_a_reference_run_supplies_neighbours_from_elsewhere() -> None:

@@ -1,24 +1,19 @@
 <script lang="ts">
   import type { TileData } from '../lib/tiles';
   import { edgeTicks, scaleBar, type TileFrame } from '../lib/frame';
-  import { track } from '../lib/track';
-  import type { Theme, TileInfo } from '../lib/types';
+  import type { TileInfo } from '../lib/types';
 
   let {
     tile,
-    index,
     data,
     error,
     frame,
-    theme,
     oncursor,
   }: {
     tile: TileInfo;
-    index: number;
     data: TileData | null;
     error: string | null;
     frame: TileFrame | null;
-    theme: Theme;
     oncursor: (c: { ix: number; iy: number } | null) => void;
   } = $props();
 
@@ -75,7 +70,6 @@
       return;
     }
     // the backing store follows the device's pixels, so a stamp stays sharp at 1:1
-    track(theme);
     const dpr = devicePixelRatio || 1;
     canvas.width = Math.round(cw * dpr);
     canvas.height = Math.round(ch * dpr);
@@ -269,7 +263,7 @@
 
       {#if !data && !error}
         <div class="skeleton" aria-live="polite">
-          <span class="label">Loading Object {String(index).padStart(6, '0')}</span>
+          <span class="label">Loading Rank {tile.rank}</span>
         </div>
       {/if}
       {#if error}

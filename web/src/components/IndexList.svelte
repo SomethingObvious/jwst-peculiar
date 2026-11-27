@@ -100,10 +100,9 @@
       <select class="ctl" bind:value={filters.verdict} aria-label="Verdict filter">
         <option value="all">All Verdicts</option>
         <option value="unreviewed">Unreviewed</option>
-        <option value="interesting">Interesting</option>
-        <option value="artifact">Artifact</option>
-        <option value="known">Known Object</option>
-        <option value="not_anomalous">Not Anomalous</option>
+        {#each VERDICTS as d (d.id)}
+          <option value={d.id}>{d.label}</option>
+        {/each}
         <option value="starred">Starred</option>
       </select>
       <select class="ctl" bind:value={filters.mosaic} aria-label="Mosaic filter">

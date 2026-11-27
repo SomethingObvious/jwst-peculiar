@@ -98,12 +98,28 @@ def load(cfg: Config, encoder: str = "nano") -> Objects:
     return Objects(t, np.concatenate(embs).astype(np.float32))
 
 
+def on_sphere(
+    ra: Floats | pd.Series[float] | list[float],
+    dec: Floats | pd.Series[float] | list[float],
+) -> Floats:
+    """Return points on a sphere of radius one radian in arcsec.
+
+    The straight distance between two is their separation in arcsec to well under
+    a millionth at the scale of a stamp, at any RA and Dec, across fields of a run.
+
+    Returns:
+        (n, 3) positions.
+    """
+    a, d = np.radians(np.asarray(ra, float)), np.radians(np.asarray(dec, float))
+    unit = np.column_stack([np.cos(d) * np.cos(a), np.cos(d) * np.sin(a), np.sin(d)])
+    return np.asarray(unit * np.degrees(1) * 3600, float)
+
+
 class Sky:
     """Which objects share sky, so one galaxy's crops never vouch for each other."""
 
     def __init__(self, t: pd.DataFrame) -> None:
-        cos = np.cos(np.radians(float(t.dec.median())))
-        self.xy = np.c_[t.ra.to_numpy() * cos * 3600, t.dec.to_numpy() * 3600]
+        self.xy = on_sphere(t.ra, t.dec)
         self.half = t.half.to_numpy()
         self.tree = cKDTree(self.xy)
         self.reach = float(self.half.max(initial=0))
@@ -198,8 +214,7 @@ def reference(obj: Objects, other: Objects) -> npt.NDArray[np.float32]:
     """
     sky = Sky(obj.t)
     pool = other.t.loc[other.pool]
-    cos = np.cos(np.radians(float(obj.t.dec.median())))
-    xy = np.c_[pool.ra.to_numpy() * cos * 3600, pool.dec.to_numpy() * 3600]
+    xy = on_sphere(pool.ra, pool.dec)
     half = np.maximum(pool.half.to_numpy(), sky.reach)
     d, _ = sky.tree.query(xy, distance_upper_bound=float(half.max(initial=0)))
     away = d > half
@@ -319,8 +334,7 @@ def find(obj: Objects, sky: Sky, seed: str) -> int:
             return int(hit[0])
     else:
         ra, dec = (float(v) for v in seed.split(","))
-        cos = np.cos(np.radians(float(obj.t.dec.median())))
-        d, j = sky.tree.query([ra * cos * 3600, dec * 3600])
+        d, j = sky.tree.query(on_sphere([ra], [dec])[0])
         if d < 1.0:
             return int(j)
     msg = f"No object in the run matches the seed {seed}."

@@ -63,7 +63,7 @@ from jwst_peculiar.flags import (
     DETECTED,
     MIN_BANDS,
     known_stars,
-    mid_dec,
+    mid_sky,
     on_spikes,
     sky_xy,
 )
@@ -262,17 +262,17 @@ def listed_star(t: pd.DataFrame, stars: pd.DataFrame, segments: pd.DataFrame) ->
     out = np.zeros(len(t), bool)
     if not len(t):
         return out
-    dec0 = mid_dec(t)
-    txy = sky_xy(t.ra, t.dec, dec0)
+    mid = mid_sky(t)
+    txy = sky_xy(t.ra, t.dec, mid)
     if len(stars):
-        d, _ = cKDTree(sky_xy(stars.ra, stars.dec, dec0)).query(txy)
+        d, _ = cKDTree(sky_xy(stars.ra, stars.dec, mid)).query(txy)
         blue = t.f_f150w_25.to_numpy(float) > t.f_f444w_25.to_numpy(float)
         out |= (d < POINT) & blue
     halo = pd.concat([stars[["ra", "dec"]], point_sources(segments)])
     if not len(halo) or not len(segments):
         return out
-    sxy = sky_xy(halo.ra, halo.dec, dec0)
-    dseg, j = cKDTree(sky_xy(segments.ra, segments.dec, dec0)).query(sxy)
+    sxy = sky_xy(halo.ra, halo.dec, mid)
+    dseg, j = cKDTree(sky_xy(segments.ra, segments.dec, mid)).query(sxy)
     flux = np.where(dseg < POINT, segments.f_f277w_25.to_numpy(float)[j], np.nan)
     mine = np.maximum(t.f_f277w_25.to_numpy(float), 0)
     for i, near in enumerate(cKDTree(sxy).query_ball_point(txy, HALO_REACH)):
@@ -285,10 +285,10 @@ def piece(t: pd.DataFrame, objects: pd.DataFrame) -> Bools:
     out = np.zeros(len(t), bool)
     if not len(objects) or not len(t):
         return out
-    dec0 = mid_dec(t)
-    txy = sky_xy(t.ra, t.dec, dec0)
+    mid = mid_sky(t)
+    txy = sky_xy(t.ra, t.dec, mid)
     groups = objects.groupby("parent").indices
-    oxy, half = sky_xy(objects.ra, objects.dec, dec0), objects.half.to_numpy(float)
+    oxy, half = sky_xy(objects.ra, objects.dec, mid), objects.half.to_numpy(float)
     for i, parent in enumerate(t.parent.to_numpy(int)):
         if parent in groups:
             k = groups[parent]
@@ -304,8 +304,8 @@ def _within(
     out = np.zeros(len(t), bool)
     if not len(ra) or not len(t):
         return out
-    dec0 = mid_dec(t)
-    pts, rows = sky_xy(ra, dec, dec0), sky_xy(t.ra, t.dec, dec0)
+    mid = mid_sky(t)
+    pts, rows = sky_xy(ra, dec, mid), sky_xy(t.ra, t.dec, mid)
     for i, near in enumerate(cKDTree(pts).query_ball_point(rows, r)):
         if near:
             out[i] = bool((np.hypot(*(pts[near] - rows[i]).T) > past).any())

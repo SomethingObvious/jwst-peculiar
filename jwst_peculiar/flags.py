@@ -68,29 +68,39 @@ def stamp_pixels(band: Band, corners: SkyCoords, grid: Grid) -> list[Floats]:
     return [rows, cols]
 
 
-def mid_dec(t: pd.DataFrame) -> float:
-    """Return the declination to project `t` around, any at all when it's empty.
+def mid_sky(t: pd.DataFrame) -> tuple[float, float]:
+    """Return the RA and Dec to project `t` around, any at all when it's empty.
+
+    RA is a circular mean, so a field across RA 0 has its middle near 0 and not 180.
 
     Returns:
         Degrees.
     """
-    return float(t.dec.median()) if len(t) else 0.0
+    ra = np.radians(t.ra.to_numpy(float))
+    ra = ra[np.isfinite(ra)]
+    if not len(ra):
+        return 0.0, 0.0
+    ra0 = np.degrees(np.arctan2(np.sin(ra).mean(), np.cos(ra).mean())) % 360
+    return float(ra0), float(t.dec.median())
 
 
 def sky_xy(
-    ra: Floats | pd.Series[float], dec: Floats | pd.Series[float], dec0: float
+    ra: Floats | pd.Series[float],
+    dec: Floats | pd.Series[float],
+    mid: tuple[float, float],
 ) -> Floats:
-    """Return positions in arcsec on a flat sky, with one cos(dec) for the field.
+    """Return positions in arcsec on a flat sky around `mid`, from `mid_sky`.
 
-    One cos(dec) for the whole field keeps offsets between objects right.
+    One cos(dec) for the whole field keeps offsets between objects right, and RA is
+    measured from the middle, so a field across RA 0 stays in one piece.
 
     Returns:
         (n, 2) east and north in arcsec.
     """
-    cos = np.cos(np.radians(dec0))
-    # RA isn't unwrapped, so a field across RA 0 misses pairs that straddle it
+    ra0, dec0 = mid
+    east = (np.asarray(ra, float) - ra0 + 180) % 360 - 180
     return np.column_stack([
-        np.asarray(ra, float) * cos * 3600,
+        east * np.cos(np.radians(dec0)) * 3600,
         np.asarray(dec, float) * 3600,
     ])
 
@@ -168,7 +178,7 @@ class StampBoxes:
     def __init__(self, t: pd.DataFrame, grid: Band) -> None:
         """Place every object's stamp on `grid`."""
         self.t, self.grid = t, grid
-        self.dec0 = mid_dec(t)
+        self.mid = mid_sky(t)
         self.cx, self.cy = grid.pixels(t.ra.to_numpy(float), t.dec.to_numpy(float))
         self.half = t.half.to_numpy(float)
         self.hpx = self.half / grid.scale
@@ -191,8 +201,8 @@ class StampBoxes:
             return n
         px, py = self.grid.pixels(*sky)
         reach = self.half * np.sqrt(2) + 0.01
-        near = cKDTree(sky_xy(*sky, self.dec0)).query_ball_point(
-            sky_xy(self.t.ra, self.t.dec, self.dec0), reach
+        near = cKDTree(sky_xy(*sky, self.mid)).query_ball_point(
+            sky_xy(self.t.ra, self.t.dec, self.mid), reach
         )
         floor = BRIGHT * self.t.max_value.to_numpy(float)
         for i, hits in enumerate(near):
@@ -256,8 +266,8 @@ def on_spikes(
     star = gaia.loc[gaia.classprob_dsc_combmod_star.to_numpy(float) > STAR_PROB]
     if not len(star) or not len(t):
         return hit
-    dec0 = mid_dec(t)
-    sxy, oxy = sky_xy(star.ra, star.dec, dec0), sky_xy(t.ra, t.dec, dec0)
+    mid = mid_sky(t)
+    sxy, oxy = sky_xy(star.ra, star.dec, mid), sky_xy(t.ra, t.dec, mid)
     mag = star.phot_g_mean_mag.to_numpy(float)
     th = None if roll is None else np.radians(roll + np.arange(0, 360, 60))
     axes = None if th is None else np.c_[np.sin(th), np.cos(th)]
@@ -281,7 +291,7 @@ def merged(t: pd.DataFrame, bad: Bools) -> Bools:
         True for those pieces, which are the same galaxy as that brightest piece.
     """
     out = np.zeros(len(t), bool)
-    x, y = sky_xy(t.ra, t.dec, mid_dec(t)).T
+    x, y = sky_xy(t.ra, t.dec, mid_sky(t)).T
     for _, g in t.loc[~bad].groupby("parent"):
         if len(g) <= 1:
             continue
@@ -316,8 +326,8 @@ def _star_brightness(band: Band, st: pd.DataFrame) -> Floats:
 def _nearest(st: pd.DataFrame, t: pd.DataFrame) -> Floats:
     if not len(st):
         return np.full(len(t), np.inf)
-    dec0 = mid_dec(t)
-    d, _ = cKDTree(sky_xy(st.ra, st.dec, dec0)).query(sky_xy(t.ra, t.dec, dec0))
+    mid = mid_sky(t)
+    d, _ = cKDTree(sky_xy(st.ra, st.dec, mid)).query(sky_xy(t.ra, t.dec, mid))
     return np.asarray(d, float)
 
 

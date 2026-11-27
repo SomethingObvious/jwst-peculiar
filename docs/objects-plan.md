@@ -328,3 +328,19 @@ This was written on 2026-11-27, before anything has run on GOODS-North, and it d
 3. How it's labelled. The main and compact top 100s go into one list, shuffled with seed 8 and with rank and score taken off, and I label all 200 from numbered contact sheets with the rubric used so far before any published catalogue is matched to them.
 4. What it's judged on. The main list: at least 50 worth a look and at most 5 artefacts in its top 100. The compact list: at most 40 artefacts in its top 100, and of the little red dots from Matthee et al. (2024) in Perger et al.'s (2025) list that fall inside the mosaic, at least 70% in the compact catalogue and at least 60% in its top 5%. There are only 7 of those before coverage, as the big JADES census of both GOODS fields hasn't published its table yet, so that part says little either way. How many moving dots are left in the compact top 100 is reported but isn't a goal.
 5. After it. The numbers are reported as they come out, nothing is tuned on GOODS-North, and it isn't run again.
+
+### Fourth Test Result
+
+It ran once on 2026-11-27 as fixed above, on bae06e5 with the COSMOS-Web label model (sha256 starting 4e80acaa), in 17 minutes. GOODS-North has 16,401 objects and 33,661 unflagged compact candidates. All 200 pooled entries were labelled blind before the key was opened.
+
+| Goal | Needed | GOODS-North |
+|---|---|---|
+| Worth a look in the main top 100 | at least 50 | 51 |
+| Artefacts in the main top 100 | at most 5 | 1 |
+| Matthee little red dots in the compact catalogue | at least 70% | 50% (3 of 6) |
+| The same in the compact top 5% | at least 60% | 50% (3 of 6) |
+| Artefacts in the compact top 100 | at most 40 | 38 |
+
+It meets three goals and misses the recall pair. Of the 7 little red dots, 6 count as inside the mosaic, and the 3 it finds are at places 30, 167 and 290. Two of the misses sit where a band has no coverage, so their candidates are flagged as uncovered and at an edge, which is what those tests are for, and the third was never a candidate, as nothing was detected within 0.9" of it. With only 6 to go on, this says little about recall either way, as the plan expected.
+
+The main list is mostly mergers, close pairs, ringed and clumpy galaxies and tidal tails, with one stamp crossed by a trail. The compact list's artefacts are mostly noise peaks (14), spikes (6), stripes (6) and trails (5), and only 3 are moving dots, where JADES had 19 before the row test. One labeller again, with no second check.

@@ -2,7 +2,7 @@ import { Tan, separation, signOf } from './wcs';
 import type { MosaicInfo, TileInfo } from './types';
 
 /**
- * Maps between the pixels of the image on screen (cutout or PNG, origin at the
+ * Maps between the pixels of the stamp on screen (origin at the
  * top-left corner of the first pixel), mosaic pixels and the sky. The image's top
  * row is the mosaic's highest row in the tile, as FITS counts rows from the bottom.
  */

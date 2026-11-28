@@ -1,9 +1,8 @@
 # Usage
 
+jwst-peculiar finds the sources in each field, cuts a colour stamp of every one big and bright enough, embeds the stamps with Zoobot and ranks them by how unlike every other object they are. Each step is a subcommand of `jwst-peculiar` and takes `--help`. [objects-plan.md](objects-plan.md) has how it was built, how well it does and the measurements behind each setting.
 
-jwst-peculiar finds the sources in each field, cuts a colour stamp of every one big and bright enough, embeds the stamps with Zoobot and ranks them by how unlike every other object they are. Each step is a subcommand of `jwst-peculiar` and takes `--help`. [objects-plan.md](objects-plan.md) has how it was built and how well it does.
-
-A YAML file says where a survey's mosaics are. Paths in it are relative to the file. `init mosaics survey.yaml` writes one for a folder of mosaics, reading the field and filter out of names like MAST's `jw02736-o001_t001_nircam_clear-f090w_i2d.fits`, DJA's `egs-grizli-v7.2-f115w-clear_drc_sci.fits` or COSMOS-Web DR1's `mosaic_nircam_f277w_COSMOS-Web_60mas_A1_v1.0_i2d.fits`, and sets `hdu: 0` when the image is in the primary HDU. Gzipped mosaics work as they are, though `cut` reads them more slowly, as each has to be unpacked whole, and `unzip mosaics` expands them in place. It keeps the bands every field has, finds sources in the one nearest F277W and colours the stamps with that, the one nearest F150W and the bluest. On a CEERS pointing from MAST, which nothing here was tuned on, it wrote a working config first time, and the top 50 had 2 artefacts, a satellite trail and a diffraction spike.
+A YAML file says where a survey's mosaics are, with paths relative to the file. `init mosaics survey.yaml` writes one for a folder of mosaics, reading the field and filter out of names like MAST's `jw02736-o001_t001_nircam_clear-f090w_i2d.fits`, DJA's `egs-grizli-v7.2-f115w-clear_drc_sci.fits` or COSMOS-Web DR1's `mosaic_nircam_f277w_COSMOS-Web_60mas_A1_v1.0_i2d.fits`. It keeps the bands every field has, finds sources in the one nearest F277W, and colours the stamps with that, the one nearest F150W and the bluest. Gzipped mosaics work as they are but read slowly, and `unzip mosaics` expands them in place.
 
 ```yaml
 name: cosmos-web
@@ -14,12 +13,13 @@ detect: f277w                 # the band sources are found in
 colour: [f277w, f150w, f115w] # red, green and blue of the stamps
 stars: stars.csv              # optional, ra and dec of known stars
 gaia: true                    # query Gaia DR3 for spikes, or a CSV, or false
+artefacts: artefacts.pt       # optional, models that drop compact artefacts
 device: auto
 ```
 
-Without `fields`, every mosaic the pattern matches in the detect band is a field.
+Without `fields`, every mosaic the pattern matches in the detect band is a field. Band names can be written either way (F115W or f115w), and `{BAND}` in a pattern fills in capitals for file names that have them.
 
-`check` reads the config and says what it found before any long step runs: how many fields, any mosaic a field lacks, the memory `cut` needs for the biggest field and the disk the whole run needs, the device `embed` will use and whether the Zoobot weights are downloaded yet. The disk figure is an upper bound, as SMACS 0723 took 2.5 bytes per mosaic pixel and COSMOS-Web 1.5. A misspelled key, a band missing from `bands` or a pattern without `{band}` stops it with the reason. Band names can be written either way (F115W or f115w), and a pattern with `{BAND}` instead of `{band}` fills in capitals for file names that have them, which `init` writes when it sees them. `run` does `check`, `cut`, `embed`, `rank` and, with F115W, F150W, F277W and F444W, `compact` in turn, and stops at the first that fails. Options after the config go to `cut`, like `run survey.yaml --redo`.
+`check` says what a config finds before any long step runs: the fields, any mosaic a field lacks, the memory `cut` needs, the disk the run needs (an upper bound), the device `embed` will use and whether the Zoobot weights are downloaded. A misspelled key or a pattern without `{band}` stops it with the reason. `run` does `check`, `cut`, `embed`, `rank` and, with F115W, F150W, F277W and F444W, `compact` in turn, and stops at the first that fails. Options after the config go to `cut`, like `run survey.yaml --redo`.
 
 ```
 jwst-peculiar init mosaics survey.yaml  a config from the mosaics' file names
@@ -35,30 +35,75 @@ jwst-peculiar view survey.yaml --list sample.csv
 jwst-peculiar label survey.yaml
 jwst-peculiar compact survey.yaml -n 500
 jwst-peculiar view survey.yaml --list compact.csv
-jwst-peculiar view survey.yaml --export site/ --site_url https://example.org/demo/
+jwst-peculiar view survey.yaml --export site/ --site-url https://example.org/demo/
 ```
 
-`cut` writes each field's objects to `fields/FIELD/objects.csv` with their aperture photometry in nJy and a `flag_*` column for every artefact test. A flagged object is left out of the ranking, and `flag_outshone`, a brighter neighbour in the stamp, only keeps it off the list. Each field is read into memory whole, about 31 bytes per pixel over all its bands, so SMACS 0723's 121 Mpx peaked at 3.7 GB. `cut` cuts several fields at once, one for every four cores and no more than fit in half the machine's memory, which took 4 COSMOS-Web fields from 3 minutes 17 seconds to 68 seconds on a 16-thread laptop with the same output. `--workers 1` cuts one at a time, and any other number sets it.
+## Cut
 
-A mosaic too big for memory, like a whole JADES or UNCOVER field, can be cut in squares with `tile: 4000` in the config, counted in pixels of the detection band. Each square is a field of its own named `FIELD~ROW-COL`, read with a 12 arcsec margin so an object on a border comes out whole, and it keeps only the objects centred in it. A tile off the mosaic's edge, with no sources at all, is left out of every step. `init` sets `tile` itself when a mosaic would need more than about 8 GB, and `check` says when the memory needed is more than the machine has and what tile size would fit. On CEERS in 2000-pixel tiles, 99.6% of objects matched the run on the whole mosaic and 49 of the top 50 were the same, and on the SMACS 0723 cluster 98.6% did. The rest are faint ones spread evenly over the field, as the sky background is fitted per tile.
+`cut` writes each field's objects to `fields/FIELD/objects.csv` with their aperture photometry in nJy and a `flag_*` column for every artefact test. A flagged object is left out of the ranking, though `flag_outshone` (a brighter neighbour in the stamp) only keeps it off the list. Each field is read into memory whole, about 31 bytes per pixel over all its bands. `cut` runs several fields at once, one for every four cores and no more than fit in half the machine's memory, and `--workers N` sets that number.
 
-`rank` counts systems, so the stamps of one galaxy take one place between them. `rank --reference other.yaml` counts another run's objects as neighbours too, so a run of one or two fields can be ranked against what a bigger survey says is common. Ranking 101 COSMOS-Web fields one at a time, with the other fields as reference, put 158 known odd objects in the fields' top 20s instead of 137, and left the top 5% the same (234 rather than 236). It works best when both runs use the same bands for colour, as a stamp's colours are part of what the embedding sees. `like` takes object ids or `RA,DEC` in degrees and lists the objects most like them. `view` opens any of these lists in the viewer, where `1` to `4` mark an object interesting, an artefact, known or ordinary and save to `verdicts.csv` in the run folder. Once there are at least 5 verdicts of each kind, `label` fits a classifier on them, and from then on `rank` multiplies rarity by its chance that an object is worth a look (`--image-only` turns that off). Interesting and known objects both count as worth a look, and a known object stays off later lists. The list alone teaches it what rare looks like but not what ordinary looks like, so label a `--sample` batch from places 101 to 2,000 now and then as well. A new run can start from another run's verdicts by copying that run's `label_model.npz` into its folder, as long as both use the same bands for colour, and `label` replaces it once the new run has verdicts of its own. `view --export` writes a list as a static site instead, and `--site_url` adds its social card and sitemap for where it will be hosted.
+A mosaic too big for memory, like a whole JADES or UNCOVER field, can be cut in squares with `tile: 4000`, counted in detection-band pixels. Each square is its own field named `FIELD~ROW-COL`, read with a 12" margin so an object on a border comes out whole, and it keeps only the objects centred in it. `init` sets `tile` when a mosaic would need more than about 8 GB, and `check` suggests a size that fits. Tiled runs match the whole-mosaic run for all but 1% or so of objects, mostly faint ones, as the sky is fitted per tile.
 
-`compact` ranks the sources too small for a stamp, which is where little red dots and brown dwarfs end up. `cut` writes each field's candidates to `fields/FIELD/compact.csv` when the config has F115W, F150W, F277W and F444W: segments at S/N 10 or more with a semimajor axis of 0.12" or less or an area under 60 pixels, found in F277W or, where F277W has nothing, in F444W. Each has its own `flag_*` tests for cosmic rays, hot pixels, stars and their spikes, and for a mosaic's edge within 1", where there are fewer exposures and more noise. That one left COSMOS-Web's recall of known little red dots and brown dwarfs as it was and took the artefacts among its labelled top 100 from 27 to 22. `flag_line` catches a thin straight line running through a candidate, a trail, a stripe or a spike, by comparing it with the sky 0.25" either side (a galaxy is wider than that, and a star's own spikes are far fainter than its centre). It hit all three trails and one cosmic ray among the 193 COSMOS-Web candidates labelled so far and none of the interesting ones. The halo test takes the field's own bright point sources as stars as well as any star list, as Gaia misses most stars fainter than about 21st magnitude. A pixel far under the sky only counts within 0.1" in F115W and F150W, the only aperture of theirs the ranking reads, which brought known little red dots in COSMOS-Web's top 5% from 216 to 223 and brown dwarfs from 17 to all 18. Where F444W is a candidate's brightest band and F277W is at 2 sigma with that light centred (at least 0.3 of the 0.25" flux inside 0.1"), F277W counts as seen for the one-band test, and a lone F444W peak within 0.1" counts as the candidate's own centre rather than a hot pixel. A little red dot can be 5 times fainter in F277W, and 66 known ones had been thrown out as one-band artefacts and 31 more for their own F444W peak. With both changes 277 of the 312 known ones on development fields are in the top 5%. Of the 50 such candidates in the top 100, 41 were worth a look and 4 were artefacts. A point source a magnitude or more brighter in F150W than F277W, and half a magnitude brighter in F277W than F444W, is flagged as a star too faint for Gaia. That took the development top 100 from 35 artefacts or stars to 30 and didn't touch a known little red dot or brown dwarf. `compact` ranks the unflagged ones on how rare their colours and concentrations are, averaged over three fits with different seeds (two single fits shared only 84 or so of their top 100, and two averages share 92), and writes a four-panel tile of each (colour and F115W on top, F277W and F444W below) so `view` can show them. It finds known little red dots very well, though 30 of its top 100 on COSMOS-Web development fields, and about half on a held-out block with a lot of short-wave striping, were still artefacts or stars, so expect to throw a fair number out. On a CEERS pointing about 8 of the top 50 were artefacts, three of them along one trail, and with the line and halo tests that went down to 3 clear ones and about 4 doubtful. Of the 7 little red dots from Kocevski et al. (2025) inside that pointing, 5 pass every test and rank in the top 56 of the 2710 that do (places 2, 4, 38, 55 and 56). A single fit can move one of them anywhere from 44th to 88th, which is why the ranking averages three. One more was taken for a piece of a neighbour, and the brightest, at F444W 24.0, was too big a segment to be a candidate at all.
+## Rank, Like and Label
+
+`rank` counts systems, so the stamps of one galaxy take one place between them. `rank --reference other.yaml` counts another run's objects as neighbours too, so a run of one or two fields can be ranked against what a bigger survey says is common, which works best when both use the same colour bands. `like` takes object ids or `RA,DEC` in degrees and lists the objects most like them.
+
+`view` opens any of these lists in the viewer, where `1` to `4` mark an object interesting, an artefact, known or ordinary, saved to `verdicts.csv` in the run folder. Once there are 5 verdicts of each kind, `label` fits a classifier, and from then on `rank` multiplies rarity by its chance that an object is worth a look (`--image-only` turns that off). A known object counts as worth a look and stays off later lists. The list alone doesn't show the model what ordinary looks like, so label a `--sample` batch from places 101 to 2,000 now and then too. A new run can start from another run's `label_model.npz`, copied into its folder, as long as both use the same colour bands. `view --export` writes a list as a static site, and `--site-url` adds its social card and sitemap.
+
+## Compact
+
+`compact` ranks the sources too small for a stamp, which is where little red dots and brown dwarfs end up. When the config has F115W, F150W, F277W and F444W, `cut` writes each field's candidates to `fields/FIELD/compact.csv`: segments at S/N 10 or more with a semimajor axis of 0.12" or less or an area under 60 pixels, found in F277W or, where F277W has nothing, in F444W. Each gets these `flag_*` tests, and `compact` ranks the ones that pass every test on how rare their colours and concentrations are, averaged over three mixture fits, then writes a four-panel tile of each for `view`.
+
+- `uncovered` and `edge`: uncovered sky in an aperture, or within 1" in any band.
+- `line`: a thin straight line through it, which is a trail, a stripe or a spike.
+- `one_band`: seen in only one band, or a one-band peak. A faint red candidate, brightest in F444W and centred at 2 sigma in F277W, counts as seen in both.
+- `sharp`: more of its flux in 0.1" than a star has, which is a cosmic ray or hot pixel, or over 60% or under 15% of its 0.1" flux inside 0.05" in both of the last two bands, which is a hot pixel on the long-wave detector or a moving source's dots.
+- `one_pair`: seen in only one of NIRCam's two exposure pairs.
+- `dark_middle`: a band under S/N 1 between two at S/N 3.
+- `listed_star`, `blue_star` and `gaia`: a known star, a point source with a star's colours too faint for Gaia, or a Gaia star's spikes or halo.
+- `piece`: a deblended piece of a stamped object, inside its stamp.
+- `row`: one of three like dots in an evenly spaced row, which is a source that moved between exposures.
+- `pixel`: a lone one-band peak or a pixel far under the sky near it.
+
+With `artefacts:` in the config, `compact` also runs a pair of fine-tuned Zoobot models over the tiles to drop the artefacts the tests miss. It scores four times as many candidates as `-n` asks for, each drawn both as the sheets show it and by signal to noise, and lists the first `-n` the models let through, with each one's chance of being an artefact in an `artefact` column. The models were trained on the labels behind [objects-plan.md](objects-plan.md#an-artefact-model-for-the-compact-list) and aren't shipped with the package yet. On four CPU cores, scoring 2,000 candidates took about 18 minutes.
+
+It finds known little red dots well, but on surveys it hadn't seen 29 to 62 of the top 100 were artefacts or stars, most on fields with short-wave striping, and it misses its goal of 40 at most on four of six.
+
+## Settings
+
+Every threshold a survey might need to change sits under `settings:` in the config, and anything left out keeps the value it was tuned to on COSMOS-Web. `check` stops on a misspelled one, the same as for any other key.
+
+```yaml
+settings:
+  compact_bands: [f150w, f200w, f356w, f444w]  # four, shortest first
+  psf_sharpest: [0.88, 0.87, 0.70, 0.61]       # needed with other compact bands
+  compact_sn: 10        # S/N a compact candidate needs
+  compact_a: 0.12       # semimajor axis in arcsec it can have at most,
+  compact_area: 60      #   or else an area in pixels under this
+  stamp_sn: 40          # what an object needs for a stamp
+  stamp_a: 0.12
+  stamp_area: 60
+  detect_sigma: 1.5     # detection, in the background noise
+  detect_pixels: 10     # the fewest connected pixels a source has
+  deblend_contrast: 0.005
+  edge: 1.0             # arcsec from uncovered sky the compact edge test reaches
+  skip: [row, line]     # tests to leave out of the ranking
+```
+
+The compact list reads its four bands in roles: the first two only through their 0.1" flux, the last two through their concentration too, and the last as the band little red dots and brown dwarfs are brightest in. NIRCam takes the first with the third and the second with the fourth, which the one-pair test assumes. `psf_sharpest` is the most of its 0.25" flux a star puts inside 0.1" in each band, which the sharp test needs for any band other than the defaults. To measure it, cut once with a guess, then take the 99th percentile of `f_BAND_10 / f_BAND_25` over the rows of the fields' `segments.csv` at S/N 100 or more in that band (`f_BAND_25 / e_BAND_25`), and cut again with `--redo`. On UNCOVER that gave every default band to within 0.02, and with F200W and F356W in the compact list it found as many known little red dots as the defaults did. A skipped test still gets its column, so changing `skip` only needs `rank` or `compact` run again, not `cut`. Other compact bands were checked on UNCOVER, but the other thresholds only at their defaults, so a changed one is worth checking on known objects before trusting the list.
 
 ## When Something Goes Wrong
 
 Run `check` first, as it catches most of these before a long step does.
 
 - `embed would run on cpu` on a machine with an NVIDIA GPU means pip installed the CPU build of PyTorch, which it does on Windows. Install the CUDA build from [pytorch.org](https://pytorch.org/get-started/locally/) into the same environment.
-- `Couldn't query Gaia` means the Gaia archive didn't answer, even after `cut` tried again three times over about two minutes, which is usually enough when it turns away several fields cut at once. Try again later, point `gaia:` at a CSV of `ra`, `dec`, `phot_g_mean_mag` and `classprob_dsc_combmod_star`, or set `gaia: false` to skip the spike test.
-- `no compact list` from `check` means the config lacks one of F115W, F150W, F277W and F444W, which every compact test was set on. The main list still runs. On a machine without internet, like most cluster compute nodes, set `gaia: false` or give a Gaia CSV. The Zoobot weights also need fetching once, so run `embed` on a machine with internet first and copy its Hugging Face cache (`~/.cache/huggingface`) across, or set `HF_HOME` to a shared folder.
-- `Couldn't load hf_hub:mwalmsley/zoobot-encoder-convnext_nano` means the Zoobot weights couldn't be downloaded. They come from the Hugging Face hub the first time `embed` runs, and are read from its cache after that.
-- A step stopped with Ctrl+C or a full disk can be run again. Each field's stamps, embeddings and compact list are written whole, and finished fields are skipped.
-- `the mosaics are in ..., so each band is turned into MJy/sr` is only a note. Mosaics in flux per pixel, like DJA's, are divided by each band's pixel area, so bands on different pixel grids still give the right colours.
-- `the mosaics' units are ..., which can't be turned into MJy/sr` means a BUNIT the tool can't read, like counts. The colours and the nJy columns are then only right if every band has the same unit and pixel size.
-- `cut short or empty, so its download probably stopped early` means a mosaic is smaller than its own header says. Download it again, as `curl -o` leaves whatever arrived before a dropped connection.
-- On a remote machine, run `view` with `--no-browser` and forward its port, with `ssh -L 8765:127.0.0.1:8765 host`, then open http://127.0.0.1:8765/ on your own. The viewer only listens on the machine it runs on.
-- `operator torchvision::nms does not exist` from `embed` means torch and torchvision came from different builds, usually torch from pytorch.org and torchvision from PyPI. Install both with the same `--index-url`.
-- `Port 8765 is taken` only means another viewer is open, and this one uses a free port instead.
-- `cut` needs memory for a whole field at once, about 31 bytes per pixel over all its bands. If a field doesn't fit, set `tile` to the size `check` suggests. Each field cut at the same time needs that much again, so if something else needs the memory, `--workers 1` cuts one field at a time.
+- `operator torchvision::nms does not exist` means torch and torchvision came from different builds. Install both with the same `--index-url`.
+- `Couldn't query Gaia` means neither ESA's archive nor Heidelberg's copy answered after three more tries over about two minutes. Try later, point `gaia:` at a CSV of `ra`, `dec`, `phot_g_mean_mag` and `classprob_dsc_combmod_star`, or set `gaia: false` to skip the spike test.
+- `Couldn't load hf_hub:mwalmsley/zoobot-encoder-convnext_nano` means the Zoobot weights couldn't be downloaded. They're fetched the first time `embed` runs and read from the cache after that.
+- On a machine without internet, like most cluster nodes, set `gaia: false` or give a Gaia CSV, and copy a Hugging Face cache (`~/.cache/huggingface`) from a machine that ran `embed`, or set `HF_HOME` to a shared folder.
+- `no compact list` from `check` means the config lacks one of F115W, F150W, F277W and F444W. The main list still runs.
+- `the mosaics are in ..., so each band is turned into MJy/sr` is only a note. `the mosaics' units are ..., which can't be turned into MJy/sr` means a BUNIT like counts, and the colours are then only right if every band has the same unit and pixel size.
+- `cut short or empty, so its download probably stopped early` means a mosaic is smaller than its header says. Download it again.
+- A field that doesn't fit in memory needs `tile` set to the size `check` suggests, and `--workers 1` cuts one field at a time if something else needs the memory.
+- A step stopped with Ctrl+C or a full disk can be run again, as outputs are written whole and finished fields are skipped.
+- On a remote machine, run `view` with `--no-browser` and forward its port with `ssh -L 8765:127.0.0.1:8765 host`, as the viewer only listens on the machine it runs on. `Port 8765 is taken` just means another viewer is open, and this one picks a free port.

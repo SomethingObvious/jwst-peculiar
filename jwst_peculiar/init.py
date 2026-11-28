@@ -1,12 +1,7 @@
 """`init FOLDER CONFIG`: write a config for a folder of NIRCam mosaics.
 
-It reads the filter out of each file name (the last `f` and three or four digits
-followed by w, m or n), takes what comes before it, less any `_nircam` or
-`_clear`, as the field, and keeps the bands every field has. Where the field comes
-after the filter, as in COSMOS-Web DR1's `mosaic_nircam_f277w_COSMOS-Web_60mas_A1`,
-the part of the names that varies is the field. The band nearest
-F277W finds sources and is red, the one nearest F150W is green and the bluest is
-blue. F115W, F150W, F277W and F444W are kept too when there, for the compact list.
+The field is what's left of each file name around its filter, less `_nircam` or
+`_clear`, or the part that varies when the field comes after the filter.
 """
 
 from __future__ import annotations
@@ -21,12 +16,13 @@ import re
 from astropy.io import fits
 import yaml
 
-from jwst_peculiar.config import BYTES_PER_PIXEL
+from jwst_peculiar.config import BYTES_PER_PIXEL, RGB, Settings
 
 BAND = re.compile(r"f(\d{3,4})[wmn]2?", re.IGNORECASE)
-COMPACT = ("f115w", "f150w", "f277w", "f444w")
+COMPACT = Settings().compact_bands
 NOISE = re.compile(r"([-_](nircam|clear))+$", re.IGNORECASE)
 SEPARATORS = "-_."
+IMAGE_AXES = 2
 # a field needing more than twice this for cut is cut in tiles of about this
 TILE_BYTES = 4e9
 # maps that come beside a mosaic and cover the same fields
@@ -36,18 +32,12 @@ AUXILIARY = re.compile(
 
 
 def _microns(band: str) -> float:
-    digits = re.sub(r"\D", "", band)
-    return int(digits) / 100
+    # the digits after the f, as the 2 of a wide filter like F150W2 isn't part of them
+    return int(re.sub(r"\D.*", "", band[1:])) / 100
 
 
 def split_name(name: str) -> tuple[str, str, str] | None:
-    """Split a mosaic's file name into its field, pattern and band.
-
-    Returns:
-        The field, the pattern with {field} and {band} (or {BAND}) in it, and the
-        band in lower case, or None
-        when the name has no filter in it.
-    """
+    """Split a mosaic's file name into its field, pattern and band."""
     hits = list(BAND.finditer(name))
     if not hits:
         return None
@@ -66,11 +56,7 @@ def _nearest(bands: list[str], microns: float) -> str:
 
 
 def colours(bands: list[str]) -> tuple[str, str, str]:
-    """Pick the red, green and blue bands, red also being the one to detect in.
-
-    Returns:
-        The bands nearest F277W and F150W, and the bluest left.
-    """
+    """Pick the red, green and blue bands, red also being the one to detect in."""
     red = _nearest(bands, 2.77)
     green = _nearest([b for b in bands if b != red], 1.5)
     blue = min((b for b in bands if b not in {red, green}), key=_microns)
@@ -85,7 +71,7 @@ def _after_band(seen: Seen) -> Seen:
     names = {
         p.replace("{field}", f): b for p, fs in seen.items() for f, b in fs.items()
     }
-    if len(names) < 2 or any(len(fs) > 1 for fs in seen.values()):  # noqa: PLR2004 a pair to compare
+    if len(names) <= 1 or any(len(fs) > 1 for fs in seen.values()):
         return seen
     pre = os.path.commonprefix(list(names))  # noqa: RUF071 names, not paths, character by character
     pre = pre[: max(pre.rfind(c) for c in SEPARATORS) + 1]
@@ -118,18 +104,11 @@ def _image_hdu(path: Path) -> int:
         primary = fits.getheader(path, 0)
     except OSError:
         return 1
-    return 0 if primary.get("NAXIS") == 2 else 1  # noqa: PLR2004 an image
+    return 0 if primary.get("NAXIS") == IMAGE_AXES else 1
 
 
 def guess(folder: Path) -> dict[str, object]:
-    """Work out a config's pattern, bands, detect band and colour from file names.
-
-    Returns:
-        The config's keys, with the pattern relative to the folder's parent.
-
-    Raises:
-        SystemExit: When no file name in the folder carries a NIRCam filter.
-    """
+    """Work out a config's pattern, bands, detect band and colour from file names."""
     seen = _scan(folder)
     if not seen:
         msg = f"No .fits or .fits.gz in {folder} has a filter like f277w in its name."
@@ -137,7 +116,7 @@ def guess(folder: Path) -> dict[str, object]:
     pattern = max(seen, key=lambda p: sum(map(len, seen[p].values())))
     fields = seen[pattern]
     common: list[str] = sorted(set.intersection(*fields.values()), key=_microns)
-    if len(common) < 3:  # noqa: PLR2004 red, green and blue
+    if len(common) < len(RGB):
         msg = f"The fields in {folder} share only {common}, and a colour stamp needs 3."
         raise SystemExit(msg)
     detect, green, blue = colours(common)
@@ -181,14 +160,7 @@ def _tile(paths: list[Path], det: Path, hdu: int) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Write a config for a folder of mosaics next to it.
-
-    Returns:
-        0.
-
-    Raises:
-        SystemExit: When the config already exists.
-    """
+    """Write a config for a folder of mosaics next to it."""
     p = argparse.ArgumentParser(prog="jwst-peculiar init FOLDER CONFIG")
     p.add_argument("folder", type=Path, help="the folder of mosaics")
     p.add_argument("config", type=Path, help="the config to write, beside the folder")
@@ -204,5 +176,5 @@ def main(argv: list[str] | None = None) -> int:
             a.folder.resolve() / str(keys["pattern"]).split("/", 1)[1]
         ).as_posix()
     a.config.write_text(yaml.safe_dump(keys, sort_keys=False), encoding="utf-8")
-    print(f"Wrote {a.config}. Run jwst-peculiar check {a.config} next.")  # noqa: T201 the command's result
+    print(f"Wrote {a.config}. Run jwst-peculiar check {a.config} next.")
     return 0

@@ -309,6 +309,270 @@ UNCOVER meets every goal. JADES meets three and misses two, its main list by 5 a
 
 The main lists are mostly mergers, close pairs, clumpy and ringed galaxies and, in UNCOVER, lensed arcs around the cluster. Their artefacts are satellite trails, one star and one galaxy whose bands look out of register. Neighbour-dominated stamps were rare (3 and 4).
 
-The compact lists find the little red dots well on both surveys, better than the goals allow for. Their artefacts are mostly one kind the tests don't catch: two or three dots of one colour in a short line, which look like a moving object caught in separate exposures. They make up 10 of UNCOVER's 29 and 19 of JADES's 42. The rest are striping, noise and stars, as on COSMOS-Web. A test for those dots is the obvious next change, and it has to be measured on development fields, not on these.
+The compact lists find the little red dots well on both surveys, better than the goals allow for. Their artefacts are mostly one kind the tests don't catch: two or three dots in a short line, sometimes one colour and sometimes a different colour each, which look like a moving object caught in separate exposures. They make up 10 of UNCOVER's 29 and 19 of JADES's 42. The rest are striping, noise and stars, as on COSMOS-Web. A test on the catalogue alone caught 3 of the 29, as in the four measured bands each dot looks like any faint red source. Telling them apart needs where each band's light sits in the images, so that test waits for a survey it can be checked on.
 
 One labeller again, with no second check. The recall figures come from a published catalogue and don't depend on the labels.
+
+### After the Third Test
+
+The moving dots got a test of their own, `flag_row`, worked out on the two surveys' labelled pools, so what follows are development numbers and not a test. Run again with it, UNCOVER's compact top 100 went from 29 artefacts to 25, with none of its moving dots left, and JADES's from 42 to 37, of which 15 are still moving dots and nearly all of those are pairs. Worth a look stayed at 28 in UNCOVER and went from 19 to 21 in JADES. Kocevski's little red dots stayed where they were, except one UNCOVER source that now sits a single place outside the top 5% (1,148 of 22,951). The entries new to each top 100 were labelled from sheets of their own, which means I knew they were new.
+
+The other lever was the label model. Fitted on COSMOS-Web's verdicts and one survey's main labels, it gave the other survey's main top 100 52 worth a look in place of 44 (JADES) and 59 in place of 51 (UNCOVER). Unfortunately it also took COSMOS-Web's development recall of rings in the top 5% from 0.452 to 0.210, and over all classes but lenses from 0.542 to 0.482, much as the second batch of labels did before. So it isn't used, and the main list is as it was.
+
+## A Fourth Test on GOODS-North, Fixed Before It Happens
+
+This was written on 2026-11-27, before anything has run on GOODS-North, and it doesn't change after. Its mosaics have been downloaded and expanded and nothing else.
+
+1. What runs. The package as committed with this section, unchanged between now and the run. The main list uses the COSMOS-Web label model (sha256 starting 4e80acaa) copied into the run folder, as in the third test. The compact list uses its committed rules, `flag_row` among them.
+2. Where. GOODS-North from the DAWN JWST Archive (version 7.4 mosaics, F115W, F150W, F277W and F444W), a survey the tool hasn't seen. It runs whole with `objects run`, tiled as `init` and `check` say.
+3. How it's labelled. The main and compact top 100s go into one list, shuffled with seed 8 and with rank and score taken off, and I label all 200 from numbered contact sheets with the rubric used so far before any published catalogue is matched to them.
+4. What it's judged on. The main list: at least 50 worth a look and at most 5 artefacts in its top 100. The compact list: at most 40 artefacts in its top 100, and of the little red dots from Matthee et al. (2024) in Perger et al.'s (2025) list that fall inside the mosaic, at least 70% in the compact catalogue and at least 60% in its top 5%. There are only 7 of those before coverage, as the big JADES census of both GOODS fields hasn't published its table yet, so that part says little either way. How many moving dots are left in the compact top 100 is reported but isn't a goal.
+5. After it. The numbers are reported as they come out, nothing is tuned on GOODS-North, and it isn't run again.
+
+### Fourth Test Result
+
+It ran once on 2026-11-27 as fixed above, on bae06e5 with the COSMOS-Web label model (sha256 starting 4e80acaa), in 17 minutes. GOODS-North has 16,401 objects and 33,661 unflagged compact candidates. All 200 pooled entries were labelled blind before the key was opened.
+
+| Goal | Needed | GOODS-North |
+|---|---|---|
+| Worth a look in the main top 100 | at least 50 | 51 |
+| Artefacts in the main top 100 | at most 5 | 1 |
+| Matthee little red dots in the compact catalogue | at least 70% | 50% (3 of 6) |
+| The same in the compact top 5% | at least 60% | 50% (3 of 6) |
+| Artefacts in the compact top 100 | at most 40 | 38 |
+
+It meets three goals and misses the recall pair. Of the 7 little red dots, 6 count as inside the mosaic, and the 3 it finds are at places 30, 167 and 290. Two of the misses sit where a band has no coverage, so their candidates are flagged as uncovered and at an edge, which is what those tests are for, and the third was never a candidate, as nothing was detected within 0.9" of it. With only 6 to go on, this says little about recall either way, as the plan expected.
+
+The main list is mostly mergers, close pairs, ringed and clumpy galaxies and tidal tails, with one stamp crossed by a trail. The compact list's artefacts are mostly noise peaks (14), spikes (6), stripes (6) and trails (5), and only 3 are moving dots, where JADES had 19 before the row test. One labeller again, with no second check.
+
+## Measurements Behind the Settings
+
+These were measured while building each setting, mostly on COSMOS-Web development fields, so none of them is a held-out result.
+
+- `init` on a CEERS pointing from MAST wrote a working config first time, and that run's top 50 had 2 artefacts, a satellite trail and a diffraction spike.
+- The disk `check` gives is an upper bound, as SMACS 0723 took 2.5 bytes per mosaic pixel and COSMOS-Web 1.5. SMACS 0723's 121 Mpx peaked at 3.7 GB in `cut`.
+- Cutting 4 COSMOS-Web fields at once took them from 3 minutes 17 seconds to 68 seconds on a 16-thread laptop, with the same output.
+- CEERS in 2000-pixel tiles matched the whole-mosaic run for 99.6% of objects and 49 of the top 50, and the SMACS 0723 cluster for 98.6%.
+- Ranking 101 COSMOS-Web fields one at a time with the rest as `--reference` put 158 known odd objects in the fields' top 20s instead of 137, and left the top 5% about the same (234 rather than 236).
+- The compact `edge` test left recall of known little red dots and brown dwarfs as it was and took the artefacts in the labelled top 100 from 27 to 22.
+- `flag_line` hit all three trails and one cosmic ray among 193 labelled candidates, and none of the interesting ones.
+- Reading pixels far under the sky only within 0.1" in F115W and F150W took known little red dots in the top 5% from 216 to 223 and brown dwarfs from 17 to all 18.
+- Counting a centred 2 sigma F277W detection as seen, and a lone F444W peak within 0.1" as the candidate's own centre, brought back 66 and 31 known little red dots, for 277 of 312 in the top 5%. Of the 50 in the top 100, 41 were worth a look and 4 artefacts.
+- `blue_star` took the top 100 from 35 artefacts or stars to 30 without touching a known little red dot or brown dwarf.
+- `flag_row` caught all 10 moving-source rows in UNCOVER's labelled pool and 16 of 27 in JADES's, and none of the 57 known little red dots in either or the 171 known little red dots and brown dwarfs on COSMOS-Web. Most of the rest in JADES are two dots, which look just like a close pair.
+- Two single mixture fits share about 84 of their top 100, and two averages of three share 92.
+- On a CEERS pointing about 8 of the compact top 50 were artefacts, which the line and halo tests brought to 3 clear ones and about 4 doubtful. Of Kocevski et al.'s (2025) 7 little red dots there, 5 pass every test and rank 2, 4, 38, 55 and 56 of 2710. One more was taken for a piece of a neighbour, and the brightest, at F444W 24.0, was too big a segment to be a candidate.
+
+## Other Compact Bands on UNCOVER, Fixed Before It Happens
+
+This checks whether `settings:` works with bands the compact tests weren't tuned on. UNCOVER is cut again with the compact bands F150W, F200W, F356W and F444W in place of F115W, F150W, F277W and F444W, and with F277W still finding sources so the candidates are the same. `psf_sharpest` for F200W and F356W is the 99th percentile of 0.1" over 0.25" flux among segments at S/N 100 or more in that cut, which gives the four default bands to within 0.02 on UNCOVER's own run. It isn't held out, as UNCOVER helped tune the row test, so it only says whether other bands work about as well.
+
+With the default bands, 18 of Kocevski et al.'s 23 little red dots inside UNCOVER are in the catalogue and 15 are in the top 5%. The goal is at least 16 in the catalogue and at least 13 in the top 5%.
+
+### Other Compact Bands Result
+
+It meets both goals. With F150W, F200W, F356W and F444W, 19 of the 23 little red dots are in the catalogue and 16 are in the top 5%, against 18 and 15 with the default bands.
+
+| Band | `psf_sharpest` measured | Default |
+|---|---|---|
+| F150W | 0.866 | 0.865 |
+| F200W | 0.824 | |
+| F356W | 0.663 | |
+| F444W | 0.621 | 0.61 |
+
+The cut ran with guesses of 0.84 for F200W and 0.66 for F356W, and `flag_sharp` was worked out again with the measured values before ranking, which flags 79 candidates rather than 100. The 99th percentile of bright segments also gives F115W 0.885 and F277W 0.720 on UNCOVER, against defaults of 0.88 and 0.70 from COSMOS-Web's Gaia stars. Only 16 Gaia stars at G 19 to 21 fall on UNCOVER's coverage, too few to measure from. This only covers recall, as nobody labelled the new compact list.
+
+## A Fifth Test on PRIMER-UDS, Fixed Before It Happens
+
+This was written on 2026-11-27, before anything has run on PRIMER-UDS, and it doesn't change after.
+
+1. What runs. Version 0.10.0 as committed with this section, with no `settings:` in the config, so every threshold is its default. The main list uses the COSMOS-Web label model (sha256 starting 4e80acaa) copied into the run folder, as in the third and fourth tests.
+2. Where. PRIMER-UDS North and South from the DAWN JWST Archive (version 7.2 mosaics, F115W, F150W, F277W and F444W), which the tool hasn't seen. Each runs whole with `run`, tiled as `init` and `check` say.
+3. How it's labelled. The main and compact top 100s of both halves together, ranked as one run, go into one list shuffled with seed 9 and with rank and score taken off, and I label all 200 from numbered contact sheets before any published catalogue is matched to them.
+4. What it's judged on. The main list: at least 50 worth a look and at most 5 artefacts in its top 100. The compact list: at most 40 artefacts in its top 100, and of Kocevski et al.'s 117 PRIMER-UDS little red dots that fall inside the mosaics, at least 70% in the compact catalogue and at least 60% in its top 5%.
+5. After it. The numbers are reported as they come out, nothing is tuned on PRIMER-UDS, and it isn't run again.
+
+### Fifth Test Result
+
+It ran once on 2026-11-27 as fixed above, with the COSMOS-Web label model, in about 40 minutes. PRIMER-UDS has 39,026 objects and 60,003 unflagged compact candidates. All 200 pooled entries were labelled blind before the key was opened.
+
+| Goal | Needed | PRIMER-UDS |
+|---|---|---|
+| Worth a look in the main top 100 | at least 50 | 64 |
+| Artefacts in the main top 100 | at most 5 | 0 |
+| Kocevski little red dots in the compact catalogue | at least 70% | 74% (86 of 117) |
+| The same in the compact top 5% | at least 60% | 71% (83 of 117) |
+| Artefacts in the compact top 100 | at most 40 | 62 |
+
+It meets four goals and misses the compact artefacts by a lot. This is the first test with enough known little red dots to say much about recall, and 83 of the 117 land in the top 5% of 60,003 candidates.
+
+The main list is mergers, close pairs, dusty edge-on discs, rings and one lensed arc, with nothing broken in it. The compact list's artefacts are noise peaks (22), short-wave stripes and spikes (21), stars and their halos (9), hot pixels (8) and pieces of bright galaxies (2). The hot pixels are a kind none of the earlier tests showed, a hard one-pixel square in F277W and F444W at the same place with nothing in the short-wave bands. Both long-wave filters use the same detector and PRIMER seems to have dithered them alike, so a hot pixel passes the one-band and one-pair tests as if it were two detections. Of the 25 worth a look, most are red point sources and a few are red fuzzy ones. One labeller again, with no second check.
+
+## A Core Test for Long-Wave Dots
+
+The fifth test's compact list had 8 hot pixels, hard one-pixel squares in F277W and F444W and nothing in the short-wave bands. That prompted this, but every cut here was set on JADES, UNCOVER and COSMOS-Web, and nothing was measured on PRIMER-UDS. JADES has the same kind of dot, and more often a moving source's two or three dots, which the row test misses when there aren't three in a line.
+
+The sharp test couldn't catch them, as the 0.25" aperture is about four times noisier than the 0.1" one, so a dot at S/N 10 isn't 3 sigma sharper than a star by that ratio. `cut` now also measures flux in 0.05", and the sharp test flags a candidate at S/N 5 or more in both long bands whose 0.05" flux is over 60% or under 15% of its 0.1" flux in both. The low side catches a candidate centred between a moving source's dots.
+
+| Sample | Lowest | Highest |
+|---|---|---|
+| 243 known little red dots and brown dwarfs on COSMOS-Web, at their candidates (0.063" pixels) | 0.22 in F277W | 0.50 in F277W, 0.37 in F444W |
+| 57 known little red dots in JADES and UNCOVER | 0.32 in F277W, 0.30 in F444W | 0.46, 0.37 |
+| Bright point sources on COSMOS-Web, JADES and UNCOVER | | 0.49 in F444W |
+| 12 lone dots and squares in a JADES sample | 0.85 in F277W, 0.67 in F444W | |
+
+On JADES it flags 200 more candidates and leaves 75 fewer unflagged. All 36 unflagged candidates with a hollow core (both under 0.2) were moving dots by eye, and 15 of the 19 entries that left the top 100 were dots or squares, while the other 4 were pushed out by the refit. Six moving dots still get in, as a point between dots is often under S/N 5 in 0.1". The top 100 has 3 fewer artefacts, and Kocevski recall is unchanged at 27 in the catalogue and 26 in the top 5%. On UNCOVER every candidate it hits was flagged already, and on COSMOS-Web's development top 100 it hits nothing. Re-cutting the development CEERS pointing changed no other column.
+
+## A Sixth Test on CEERS, Fixed Before It Happens
+
+This was written on 2026-11-27, before anything has run on the full CEERS mosaics, which have been downloaded and nothing else, and it doesn't change after.
+
+1. What runs. The package as committed with this section, with no `settings:` in the config. The main list uses the COSMOS-Web label model (sha256 starting 4e80acaa) copied into the run folder.
+2. Where. CEERS from the DAWN JWST Archive (version 7.4 mosaics, F115W, F150W, F277W and F444W), run whole with `run`, tiled as `init` and `check` say. One CEERS pointing (jw01345-o001_t021) was used in development, so anything on its F277W coverage is left out. The pool takes the first 100 of each list off it, and recall counts the little red dots off it, 57 of Kocevski et al.'s 64 before coverage.
+3. How it's labelled. The two top 100s go into one list shuffled with seed 10 and with rank and score taken off, and I label all 200 from numbered contact sheets before any published catalogue is matched to them.
+4. What it's judged on. The main list: at least 50 worth a look and at most 5 artefacts in its top 100. The compact list: at most 40 artefacts in its top 100, and of those little red dots that fall inside the mosaic, at least 70% in the compact catalogue and at least 60% in its top 5%.
+5. After it. The numbers are reported as they come out, nothing is tuned on CEERS, and it isn't run again.
+
+### Sixth Test Result
+
+It ran once on 2026-11-27 as fixed above, with the COSMOS-Web label model, in 25 minutes. CEERS has 18,288 objects and 30,386 unflagged compact candidates off the development pointing. All 200 pooled entries were labelled blind before the key was opened.
+
+| Goal | Needed | CEERS |
+|---|---|---|
+| Worth a look in the main top 100 | at least 50 | 53 |
+| Artefacts in the main top 100 | at most 5 | 4 |
+| Kocevski little red dots in the compact catalogue | at least 70% | 81% (46 of 57) |
+| The same in the compact top 5% | at least 60% | 79% (45 of 57) |
+| Artefacts in the compact top 100 | at most 40 | 49 |
+
+It meets four goals and misses the compact artefacts again, by less than on PRIMER-UDS. The compact list's artefacts here are mostly faint stars (20), with stripes (11), noise peaks (11), spikes (3) and pieces of bright galaxies (3), and only one moving source. The stars are blue point sources bright in F115W that the blue star test lets through. CEERS has few of the dots the core cuts are for, which flagged 6 candidates that no other test caught first. The main list's 4 artefacts are stamps crossed by a stripe. One labeller again, with no second check.
+
+## Looser Star Colours
+
+CEERS's compact list was mostly faint stars, and the blue star test wanted F150W a full magnitude over F277W and F277W half a magnitude over F444W. Only 31% of COSMOS-Web's listed stars above S/N 10 in F150W met both, as cool stars fall less steeply. The cuts are now 0.5 and 0.3 magnitudes, which 75% of those stars meet, and they were set on COSMOS-Web with JADES and UNCOVER to check, not on CEERS.
+
+- COSMOS-Web: none of the 418 known little red dots, 27 brown dwarfs or 88 candidates labelled worth a look gets flagged. Of 40 newly flagged candidates no other test caught, 34 look like stars on their tiles and 6 are too faint or crowded to call.
+- JADES and UNCOVER: about 500 more candidates each are flagged as stars. Recall stays at 27 and 18 Kocevski dots in the catalogue, and UNCOVER's top 5% goes from 15 to 16. The top 100s lose 7 and 6 entries, 4 and 5 of them stars now flagged.
+
+Stripes were the next biggest group on CEERS, so the line test was tried with its side strips 0.5" to 1" out and with longer arms, on the labelled stripes of JADES and UNCOVER. No version caught more than half of either survey's stripes, and the ones that caught the most also flagged a candidate worth a look or a known little red dot, so the line test is unchanged.
+
+## A Seventh Test on NGDEEP, Fixed Before It Happens
+
+This was written on 2026-11-27, before anything has run on the NGDEEP mosaics, which have been downloaded and checked and nothing else, and it doesn't change after.
+
+1. What runs. The package as committed with this section, with no `settings:` in the config. The main list uses the COSMOS-Web label model (sha256 starting 4e80acaa) copied into the run folder.
+2. Where. NGDEEP from the DAWN JWST Archive (version 7.2 mosaics, F115W, F150W, F277W and F444W), run whole with `run`, tiled as `init` and `check` say. Anything on the F277W coverage of the JADES mosaic used in development is left out, both from the pool, which takes the first 100 of each list off it, and from recall, which counts Kocevski et al.'s 10 NGDEEP little red dots off it.
+3. How it's labelled. The two top 100s go into one list shuffled with seed 11 and with rank and score taken off, and I label all 200 from numbered contact sheets before any published catalogue is matched to them.
+4. What it's judged on. The same goals as the sixth test. The main list: at least 50 worth a look and at most 5 artefacts in its top 100. The compact list: at most 40 artefacts in its top 100, and of those little red dots that fall inside the mosaic, at least 70% in the compact catalogue and at least 60% in its top 5%. With 10 dots or fewer, recall here says little on its own.
+5. After it. The numbers are reported as they come out, nothing is tuned on NGDEEP, and it isn't run again. If the compact list misses its artefact goal again, that goal is recorded as unmet for surveys the package wasn't developed on, and the rounds of fixes stop there.
+
+### Seventh Test Result
+
+It ran once on 2026-11-27 as fixed above, with the COSMOS-Web label model, in 11 minutes. Off the JADES development mosaic, NGDEEP has 8,220 unflagged compact candidates. All 200 pooled entries were labelled blind before the key was opened.
+
+| Goal | Needed | NGDEEP |
+|---|---|---|
+| Worth a look in the main top 100 | at least 50 | 47 |
+| Artefacts in the main top 100 | at most 5 | 2 |
+| Kocevski little red dots in the compact catalogue | at least 70% | 60% (6 of 10) |
+| The same in the compact top 5% | at least 60% | 60% (6 of 10) |
+| Artefacts in the compact top 100 | at most 40 | 43 |
+
+It meets two goals and misses three. The compact list's artefacts are mostly short-wave stripes (20), with pieces of bright galaxies (8), noise peaks (7), faint stars (6) and spikes (2), so the looser star colours left 6 stars where CEERS had 20, and stripes took their place. The four little red dots it lost have no candidate within 0.6", the nearest 0.8" to 1.3" away, so they went missing before any flag was applied. The six it found are at places 2, 5, 6, 8, 11 and 72. The main list is 3 short of its goal for the first time since JADES. One labeller again, with no second check.
+
+### Where the Rounds Stop
+
+The compact list has now missed its artefact goal on JADES, PRIMER-UDS, CEERS and NGDEEP, and met it on UNCOVER and GOODS-North, so by the rule above that goal is recorded as unmet for surveys the package wasn't developed on and the rounds of fixes stop. Each round removed the kind of artefact the last survey had most of (moving dots, hot pixels, faint stars), and the next survey's top 100 filled up with another kind, stripes most often. On fresh surveys between 29 and 62 of its top 100 are artefacts. It still finds most known little red dots, though how many varies a lot by survey, from 3 of 6 on GOODS-North to 46 of 57 on CEERS.
+
+## An Artefact Model for the Compact List
+
+Paul asked for more rounds after the seventh test, so the stopping rule above is set aside at his request. The compact goal is now tighter as well, at most 20 artefacts in the top 100, and the rounds end when two fresh surveys in a row meet every goal.
+
+Seven rounds of written tests each removed the kind of artefact the last survey had most of, and the next survey's top 100 filled up with another, so this round learns them from the labels instead. Zoobot's nano encoder is fine-tuned end to end with a one-unit head on every labelled compact tile from the blind pools and COSMOS-Web, plus 40 drawn from places 101 to 500 of each survey's list, with the known little red dots (Kocevski et al.'s and COSMOS-Web's) as tiles it must keep. That's 479 artefacts against 233 worth a look, 263 ordinary and 684 dots. There are two models, one on tiles as the sheets show them and one on tiles drawn by signal to noise, and a candidate's chance of being an artefact is the mean of both over its eight turns and mirror images. Frozen embeddings with a logistic regression caught only about 43% of the artefacts for the same loss, at any Zoobot size, and adding catalogue columns or the signal-to-noise tiles didn't change that much.
+
+Judged leave one survey out, so each survey is scored by models that never saw it, the pair catches 410 of the 479 artefacts and drops 13 of 233 worth a look and 9 of the 684 known dots. The cut, 0.32, keeps 97% of the worth-a-look tiles and dots, with COSMOS-Web's 448 dots weighted 0.3 so they count about as much as one survey. It was picked from all seven surveys' held-out scores together, so it isn't quite blind to any one of them.
+
+Each development survey was then ranked again with the models that left it out, and the new entries in its top 100 labelled the same way.
+
+| Survey | Artefacts in its blind test | Artefacts with the models | Worth a look with them | 100th entry was at |
+|---|---|---|---|---|
+| UNCOVER | 29 | 8 | 51 | 345 |
+| JADES | 42 | 8 | 56 | 325 |
+| GOODS-North | 38 | 11 | 40 | 173 |
+| PRIMER-UDS | 62 | 8 | 64 | 323 |
+| CEERS | 49 | 13 | 47 | 287 |
+| NGDEEP | 43 | 8 | 31 | 197 |
+
+Every survey is under 20. These aren't blind numbers, though. I labelled the 316 new entries knowing each had passed the models, and the blind tests ran on earlier versions of the package. The eighth test below is the real check.
+
+A looser size limit of 0.15" was tried as well, since some lost dots measure 0.12" to 0.14" across. It kept no more Kocevski dots on UNCOVER, JADES, PRIMER-UDS or CEERS and added between 3% and 14% more candidates, so the limit stays at 0.12".
+
+## An Eighth Test on NEP-TDF, Fixed Before It Happens
+
+This was written on 2026-11-28, before anything has run on the NEP-TDF mosaics, which have been downloaded and checked and nothing else, and it doesn't change after.
+
+1. What runs. The package as committed with this section, with no `settings:` in the config. The main list uses the COSMOS-Web label model (sha256 starting 4e80acaa) copied into the run folder, and the compact list the artefact models trained on every development label (sha256 starting 48d9aefa), named by `artefacts:` in the config.
+2. Where. The JWST NEP Time-Domain Field from the DAWN JWST Archive (version 7.0 mosaics, F115W, F150W, F277W and F444W), run whole with `run` in the two tiles `init` and `check` set. Nothing from it was used in development and no development survey overlaps it, so nothing is left out.
+3. How it's labelled. The two top 100s go into one list shuffled with seed 12 and with rank, score and artefact chance taken off, and I label all 200 from numbered contact sheets with [labelling.md](labelling.md) before any catalogue is matched to them. A second labeller may label the same sheets from that page alone, and if so both sets of counts are reported.
+4. What it's judged on. The main list: at least 50 worth a look and at most 5 artefacts in its top 100. The compact list: at most 20 artefacts in its top 100. No published list of little red dots covers this field, so recall can't be judged here. It rests on the earlier blind tests and on the models dropping 9 of 684 known dots when judged leave one survey out.
+5. After it. The numbers are reported as they come out, nothing is tuned on NEP-TDF, and it isn't run again. The rounds end once two fresh surveys in a row meet every goal. If this one passes, a ninth survey is fixed the same way before it runs. If it misses, the fix that follows is written up first and NEP-TDF doesn't count toward the two.
+
+### Eighth Test Result
+
+It ran once on 2026-11-28 as fixed above, with the COSMOS-Web label model and the artefact models (sha256 starting 48d9aefa), in 5 minutes. NEP-TDF has 2,233 objects and 2,969 unflagged compact candidates, and the artefact models put 994 of the top 2,000 compact candidates over the cut. All 200 pooled entries were labelled blind with [labelling.md](labelling.md) before the key was opened.
+
+| Goal | Needed | NEP-TDF |
+|---|---|---|
+| Worth a look in the main top 100 | at least 50 | 31 |
+| Artefacts in the main top 100 | at most 5 | 5 |
+| Artefacts in the compact top 100 | at most 20 | 4 |
+
+The compact list meets its goal by a wide margin, with 4 artefacts (a noise peak, a stripe, a faint star and a piece of a bright galaxy) and 50 worth a look, against 29 to 62 artefacts on every fresh survey before the models. The main list misses its worth-a-look goal badly and only just meets its artefact goal. This shallow field is full of bright, nearby spirals and red discs, which the rubric counts as ordinary however red they are, and earlier tests had no rubric written down, so 31 isn't quite comparable with their numbers. Three of the main list's artefacts are large, even red patches with no structure that I took for ghosts, though I'm not sure of them. So NEP-TDF doesn't count toward the two clean surveys, and the main list is what the next round has to fix. One labeller again, with no second check.
+
+## A Pooled Label Model for the Main List
+
+The main list's label model had only ever been fitted to COSMOS-Web's viewer verdicts, which is a big part of why NEP-TDF missed. So I fitted the same model to every survey's blind main labels plus those verdicts, and judged it leave one survey out, setting each survey's top 100 under a pooled model fitted without that survey against its top 100 under the COSMOS-Web model. This bar was written down before the comparison ran.
+
+1. Summed over the seven blind surveys, the pooled model's top 100s hold at least 30 more worth a look.
+2. It wins or ties on worth a look in at least five of the seven.
+3. No survey's top 100 has more than 5 artefacts under it.
+4. On COSMOS-Web, its top 5% recall of the known odd objects is no more than 0.05 below the COSMOS-Web model's, and its ring recall no more than 0.10 below. The COSMOS-Web model is scored on its own training survey there, which favours it.
+
+The 238 entries in either top 100 with no label yet were labelled from shuffled sheets that didn't say which model put them there, with 10 already labelled entries a survey mixed in. Those 70 showed my labels had drifted a lot. Of 37 I'd called worth a look in the earlier tests, I called 24 ordinary this time, as the earlier tests had no rubric and this one had [labelling.md](labelling.md) open. An entry in both top 100s counts the same for both models, so all 434 entries in only one of them were then relabelled together in one shuffled sitting, and the bar was judged on those.
+
+| Survey | In only one top 100 | Worth a look, pooled only | Worth a look, COSMOS-Web only | Artefacts in the pooled top 100 |
+|---|---|---|---|---|
+| UNCOVER | 80 | 19 | 10 | 0 |
+| JADES | 62 | 18 | 2 | 4 |
+| GOODS-North | 64 | 9 | 5 | 4 |
+| PRIMER-UDS | 52 | 9 | 6 | 0 |
+| CEERS | 58 | 9 | 6 | 2 |
+| NGDEEP | 66 | 13 | 2 | 4 |
+| NEP-TDF | 52 | 8 | 2 | 3 |
+| All | 434 | 85 | 33 | |
+
+On COSMOS-Web the top 5% holds 41.1% of the 1,149 known mergers, rings, lenses and arcs under the pooled model against 40.9%, and 26.8% of the 97 rings against 30.9%. So it passes all four, by 52 worth a look and on all seven surveys. Half of the 434 I had labelled an hour before, without knowing which model they came from, and it's one labeller again.
+
+It doesn't fix the main list on its own, though. With the shared entries keeping their earlier labels, the pooled top 100s hold 33 to 62 worth a look, and four of the seven are still under 50, NEP-TDF lowest at 33. The final pooled model is fitted on all 1,301 main labels (107 artefacts, 744 ordinary, 450 worth a look), with sha256 starting 81c533fc. It's an ordinary `label_model.npz`, copied into a run folder like any other, and isn't in the repo as the hooks keep arrays out.
+
+## A Ninth Test on MACS0647, Fixed Before It Happens
+
+This was written on 2026-11-28, before anything has run on the six fresh mosaics, which have been downloaded and nothing else apart from the header check on MACS0647, and it doesn't change after.
+
+1. What runs. The package as committed with this section, with no `settings:` in the config. The main list uses the pooled label model (sha256 starting 81c533fc) copied into the run folder, and the compact list the artefact models (sha256 starting 48d9aefa), named by `artefacts:` in the config.
+2. Where. The six downloaded cluster fields from the DAWN JWST Archive go in the order `random.Random(9).sample` gives their sorted names, which is MACS0647, MRG0138, El Gordo, Abell S1063, Abell 1689 and then Sunrise. MACS0647 (version 7.0 mosaics, F115W, F150W, F277W and F444W) runs whole in the 12 tiles `init` and `check` set. No development survey overlaps it, so nothing is left out.
+3. How it's labelled. The two top 100s go into one list shuffled with seed 13 and with rank, score and artefact chance taken off, and I label all 200 from numbered contact sheets with [labelling.md](labelling.md) before any catalogue is matched to them. A second labeller may label the same sheets from that page alone, and if so both sets of counts are reported.
+4. What it's judged on. The main list: at least 50 worth a look and at most 5 artefacts in its top 100. The compact list: at most 20 artefacts in its top 100. No published list of little red dots covers this field, so recall isn't judged here. MACS0647 is a lensing cluster, which brings arcs and a crowd of cluster ellipticals, and nothing is changed for that.
+5. After it. The numbers are reported as they come out, nothing is tuned on MACS0647, and it isn't run again. If both lists pass, MRG0138 is the tenth test with the same models and goals, and a pass there ends the rounds. If it misses, the fix that follows is written up first and the next survey in the order is used.
+
+### Ninth Test Result
+
+It ran once on 2026-11-28 as fixed above, with the pooled label model (sha256 starting 81c533fc) and the artefact models (sha256 starting 48d9aefa), in 6 minutes. Six of the 12 tiles fall off the mosaic, and MACS0647 has 2,157 objects, 1,103 of them unflagged, so the main top 100 is nearly a tenth of every object it could show. The artefact models put 1,180 of the top 1,868 compact candidates over the cut. All 200 pooled entries were labelled blind with [labelling.md](labelling.md) before the key was opened.
+
+| Goal | Needed | MACS0647 |
+|---|---|---|
+| Worth a look in the main top 100 | at least 50 | 23 |
+| Artefacts in the main top 100 | at most 5 | 3 |
+| Artefacts in the compact top 100 | at most 20 | 17 |
+
+The compact list meets its goal again, though by less than on NEP-TDF. 13 of its 17 artefacts are faint blue points with a sharp F115W dot that I took for stars, and it has 39 worth a look, mostly green points. The main list misses its worth-a-look goal by more than it did on NEP-TDF, with 23. Most of its top 100 is red discs, edge-on spirals and plain cluster members, and all 3 artefacts are pieces of bright galaxies. So MACS0647 doesn't count toward the two clean surveys either. The main list has now missed on the two smallest fields, and under the rubric a top 100 drawn from about 1,000 objects may not hold 50 worth a look at all, which the next round has to settle before it tunes anything. One labeller again, with no second check.

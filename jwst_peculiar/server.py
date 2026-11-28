@@ -26,14 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 def built_viewer() -> Path:
-    """Return the folder of the built viewer.
-
-    Returns:
-        APP_DIR.
-
-    Raises:
-        SystemExit: If the viewer hasn't been built.
-    """
+    """Return the folder of the built viewer."""
     if not (APP_DIR / "index.html").is_file():
         msg = (
             f"The viewer isn't built, as {APP_DIR / 'index.html'} is missing. "
@@ -59,11 +52,7 @@ def serve(bundle: ObjectBundle, *, port: int, browser: bool) -> None:
 
 
 def open_server(bundle: ObjectBundle, port: int) -> Server:
-    """Bind the viewer to `port` on localhost, or to a free port if it's taken.
-
-    Returns:
-        The bound server.
-    """
+    """Bind the viewer to `port` on localhost, or to a free port if it's taken."""
     handler = make_handler(bundle)
     try:
         return Server(("127.0.0.1", port), handler)
@@ -116,15 +105,9 @@ class _ViewerHandler(BaseHTTPRequestHandler):
         self._send(status, json.dumps({"error": message}).encode(), "application/json")
 
     def _from_elsewhere(self) -> bool:
-        """Tell a request from the viewer's own page from one sent by another site.
-
-        A browser lets any page send requests to localhost, and a hostile one can
-        point its own domain here to read the answers. Neither can fake these headers.
-
-        Returns:
-            True when the Host or Origin isn't this server, or the browser says the
-            request came from another site.
-        """
+        """Tell a request from the viewer's own page from one sent by another site."""
+        # any page can send to localhost, and DNS rebinding can read the answers, but
+        # neither can fake these headers
         port = self.connection.getsockname()[1]
         here = {f"127.0.0.1:{port}", f"localhost:{port}"}
         origin = self.headers.get("Origin")
@@ -209,6 +192,6 @@ class _ViewerHandler(BaseHTTPRequestHandler):
                 self.bundle.run_dir,
                 key,
                 body.get("verdict"),
-                star,
-                str(body.get("note") or ""),
+                star=star,
+                note=str(body.get("note") or ""),
             )

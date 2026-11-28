@@ -13,8 +13,10 @@ import socket
 import threading
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, unquote
+import warnings
 
 from astropy.io import fits
+from astropy.utils.exceptions import AstropyUserWarning
 from astropy.wcs import WCS
 import numpy as np
 import pandas as pd
@@ -22,25 +24,33 @@ from PIL import Image
 import pytest
 from sklearn.linear_model import LogisticRegression
 import torch
+import yaml
 
-from jwst_peculiar import cut, server
+from jwst_peculiar import compact, cut, server
 from jwst_peculiar.check import report
 from jwst_peculiar.cli import main, run
 from jwst_peculiar.compact import (
-    BANDS,
     bad_pixel,
     blue_star,
     dark_middle,
+    in_a_row,
+    listed_star,
     near_edge,
     on_line,
     one_band,
     one_pair,
+    piece,
     sharp,
 )
-from jwst_peculiar.compact import (
-    main as compact_main,
+from jwst_peculiar.compact import main as compact_main
+from jwst_peculiar.config import (
+    EMPTY,
+    FLAGS,
+    Config,
+    Settings,
+    read_config,
+    written,
 )
-from jwst_peculiar.config import EMPTY, Config, read_config, written
 from jwst_peculiar.cut import (
     Band,
     N,
@@ -53,18 +63,20 @@ from jwst_peculiar.cut import (
     render,
     wcs_record,
 )
-from jwst_peculiar.cut import (
-    main as cut_main,
-)
-from jwst_peculiar.embed import embed
-from jwst_peculiar.flags import blobs, merged, on_spikes
+from jwst_peculiar.cut import main as cut_main
+from jwst_peculiar.embed import classifier, embed, load_encoder, resolve_device
+from jwst_peculiar.embed import main as embed_main
+from jwst_peculiar.flags import blobs, merged, mid_sky, on_spikes
 from jwst_peculiar.init import guess, split_name
+from jwst_peculiar.init import main as init_main
 from jwst_peculiar.rank import (
     CLASSES,
     MODEL,
     Objects,
     Sky,
+    find,
     label_main,
+    like_main,
     p_worth,
     rank_main,
     rarity,
@@ -73,6 +85,7 @@ from jwst_peculiar.rank import (
 from jwst_peculiar.server import make_handler, open_server
 from jwst_peculiar.verdicts import read_verdicts, save_verdict
 from jwst_peculiar.view import ObjectBundle, add_site_meta, export, lit_span
+from jwst_peculiar.view import main as view_main
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -80,6 +93,7 @@ if TYPE_CHECKING:
 
     import numpy.typing as npt
 
+BANDS = Settings().compact_bands
 SCALE = 0.03
 RA0, DEC0 = 150.0, 2.0
 
@@ -102,6 +116,15 @@ def gaussian(
     return np.asarray(amp * np.exp(-r2 / (2 * sigma**2)), np.float32)
 
 
+def gaia_star(ra: float, dec: float, g: float, *, p: float = 1.0) -> pd.DataFrame:
+    return pd.DataFrame({
+        "ra": [ra],
+        "dec": [dec],
+        "phot_g_mean_mag": [g],
+        "classprob_dsc_combmod_star": [p],
+    })
+
+
 def offsets(east: list[float], north: list[float]) -> pd.DataFrame:
     # objects at offsets in arcsec from RA0, DEC0, each with a 0.6 arcsec stamp
     dec = DEC0 + np.array(north) / 3600
@@ -119,13 +142,21 @@ def test_one_band_peaks_are_blobs_and_real_sources_are_not() -> None:
     assert (round(float(x[0])), round(float(y[0]))) == (112, 100)
 
 
+def test_snr_tiles_show_how_significant_a_source_is_not_how_bright() -> None:
+    noise = np.random.default_rng(0).normal(0, 1, (200, 200)).astype(np.float32)
+    sky = noise + gaussian(100, 100, sigma=2.0, amp=30.0)
+    w = band(sky).wcs
+    faint = compact.snr_tile([(sky, w, 1.0)] * 4, RA0, DEC0)
+    bright = compact.snr_tile([(10 * sky, w, 1.0)] * 4, RA0, DEC0)
+    assert int(np.abs(faint.astype(int) - bright).max()) <= 1
+    mid = compact.TILE // 2
+    # a 30 sigma peak is bright and plain sky stays dark
+    assert faint[mid, mid, 0] > 150
+    assert np.median(faint[:20, :20, 0]) < 40
+
+
 def test_spike_flags_follow_the_roll_angle() -> None:
-    star = pd.DataFrame({
-        "ra": [RA0],
-        "dec": [DEC0],
-        "phot_g_mean_mag": [18.0],
-        "classprob_dsc_combmod_star": [0.9],
-    })
+    star = gaia_star(RA0, DEC0, 18.0, p=0.9)
     # 4" out is past the halo (2.3") and inside the spikes' reach (4.7") at G 18.
     t = offsets([0.0, 4 * np.sin(np.radians(30))], [4.0, 4 * np.cos(np.radians(30))])
     assert on_spikes(t, star, roll=0.0).tolist() == [True, False]
@@ -133,27 +164,55 @@ def test_spike_flags_follow_the_roll_angle() -> None:
     assert on_spikes(t, star, roll=None).tolist() == [False, False]
 
 
-def test_compact_rules_drop_artefacts_and_keep_a_red_point_source() -> None:
-    # 0.1" and 0.25" fluxes in F115W, F150W, F277W and F444W, all with error 1
+OTHER_BANDS = Settings(
+    compact_bands=("f150w", "f200w", "f356w", "f444w"),
+    psf_sharpest=(0.9, 0.9, 0.7, 0.6),
+)
+
+
+@pytest.mark.parametrize("s", [Settings(), OTHER_BANDS])
+def test_compact_rules_drop_artefacts_and_keep_a_red_point_source(s: Settings) -> None:
+    # 0.05", 0.1" and 0.25" fluxes in the four bands, shortest first, all with error 1
     rows = {
-        "little red dot": ([2, 6, 30, 60], [3, 8, 45, 100]),
-        "hot pixel in F444W": ([0, 0, 4, 60], [0, 0, 6, 62]),
-        "only F150W and F444W": ([0, 20, 0, 30], [0, 30, 0, 50]),
-        "dark F150W": ([20, 0, 20, 20], [40, 0, 40, 40]),
-        "one band": ([0, 0, 0, 25], [0, 0, 0, 40]),
+        "little red dot": ([1, 2, 12, 20], [2, 6, 30, 60], [3, 8, 45, 100]),
+        "hot pixel in F444W": ([0, 0, 2, 50], [0, 0, 4, 60], [0, 0, 6, 62]),
+        "only F150W and F444W": ([0, 8, 0, 12], [0, 20, 0, 30], [0, 30, 0, 50]),
+        "dark F150W": ([8, 0, 8, 8], [20, 0, 20, 20], [40, 0, 40, 40]),
+        "one band": ([0, 0, 0, 10], [0, 0, 0, 25], [0, 0, 0, 40]),
+        "hot pixel in both long bands": ([0, 0, 9, 9], [0, 0, 10, 10], [0, 0, 10, 10]),
+        "between two moving dots": ([0, 0, 1, 1], [0, 0, 10, 10], [0, 0, 20, 20]),
     }
     t = pd.DataFrame({
-        f"{k}_{b}_{ap}": [
-            (v[0] if ap == "10" else v[1])[i] if k == "f" else 1.0
-            for v in rows.values()
-        ]
+        f"{k}_{b}_{ap}": [v[j][i] if k == "f" else 1.0 for v in rows.values()]
         for k in ("f", "e")
-        for i, b in enumerate(("f115w", "f150w", "f277w", "f444w"))
-        for ap in ("10", "25")
+        for i, b in enumerate(s.compact_bands)
+        for j, ap in enumerate(("05", "10", "25"))
     })
-    caught = one_band(t) | sharp(t) | one_pair(t) | dark_middle(t)
-    assert caught.tolist() == [False, True, True, True, True]
-    assert sharp(t).tolist() == [False, True, False, False, False]
+    caught = one_band(t, s=s) | sharp(t, s=s) | one_pair(t, s=s) | dark_middle(t, s=s)
+    assert caught.tolist() == [False, True, True, True, True, True, True]
+    assert sharp(t, s=s).tolist() == [False, True, False, False, False, True, True]
+
+
+def test_settings_change_the_bands_and_skip_tests(tmp_path: Path) -> None:
+    (tmp_path / "survey.yaml").write_text(
+        f"{BASE}bands: [F150W, F200W, F356W, F444W]\ndetect: f356w\n"
+        "colour: [f356w, f200w, f150w]\nsettings:\n"
+        "  compact_bands: [F150W, F200W, F356W, F444W]\n"
+        "  psf_sharpest: [0.9, 0.9, 0.7, 0.6]\n  compact_sn: 8\n  skip: row\n",
+        encoding="utf-8",
+    )
+    cfg = read_config(tmp_path / "survey.yaml")
+    assert cfg.settings == dataclasses.replace(
+        OTHER_BANDS, compact_sn=8.0, skip=("row",)
+    )
+    t = pd.DataFrame({"flag_row": [True, False], "flag_sharp": [False, True]})
+    assert cfg.settings.flagged(t).tolist() == [False, True]
+    objects = Objects(
+        pd.concat([offsets([0, 100], [0, 0]), t], axis=1),
+        np.eye(2, dtype=np.float32),
+        ("row",),
+    )
+    assert objects.flagged.tolist() == [False, True]
 
 
 def test_pieces_of_one_galaxy_merge_into_the_brightest() -> None:
@@ -186,6 +245,28 @@ def test_rarity_ignores_neighbours_that_share_its_sky() -> None:
     rar = rarity(e, Sky(t))
     assert rar[0] == pytest.approx(0.5, abs=1e-6)
     assert rar[1] == pytest.approx(0.0, abs=1e-6)
+    # every object flagged leaves nothing to compare
+    assert len(rarity(e[:0], Sky(t.iloc[:0]))) == 0
+
+
+def test_neighbours_share_sky_anywhere_in_a_run_of_many_fields() -> None:
+    # pairs 0.36" apart across RA 0, at RA 250 opposite most of the run, and at
+    # Dec -73 in a run mostly near the equator
+    pairs = [(359.99995, 0.00005, 0.0), (249.99995, 250.00005, 0.0)]
+    pairs += [(110.0, 110.0 + 0.36 / 3600 / np.cos(np.radians(73)), -73.0)]
+    ra = [r for a, b, _ in pairs for r in (a, b)] + [10.0] * 50 + [130.0] * 50
+    dec = [d for *_, d in pairs for _ in range(2)] + [2.0] * 100
+    t = pd.DataFrame({"ra": ra, "dec": dec, "half": 0.6})
+    t.loc[6:, "ra"] += np.arange(100) * 0.01
+    sky = Sky(t)
+    assert [set(sky.near(i)) for i in (0, 2, 4)] == [{0, 1}, {2, 3}, {4, 5}]
+    # a position that failed to read leaves the middle of the rest
+    one_bad = pd.DataFrame({"ra": [np.nan, 10.0, 10.0002], "dec": 0.0})
+    assert mid_sky(one_bad)[0] == pytest.approx(10.0001)
+    t = t.head(3)
+    sky = Sky(t)
+    objects = Objects(t.assign(id="a"), np.eye(3, dtype=np.float32))
+    assert find(objects, sky, "0.00005,0") == 1
 
 
 def test_a_reference_run_supplies_neighbours_from_elsewhere() -> None:
@@ -198,6 +279,9 @@ def test_a_reference_run_supplies_neighbours_from_elsewhere() -> None:
     other = Objects(there, np.array([u] + [w] * 5, np.float32))
     ref = reference(here, other)
     assert ref.tolist() == [w.tolist()] * 5
+    # 3" away is on this run's sky for a reference object with a 5" stamp
+    there.loc[0, ["ra", "half"]] = [offsets([3], [0]).ra[0], 5.0]
+    assert len(reference(here, other)) == 5
     alone = rarity(here.e, Sky(here.t))
     with_ref = rarity(here.e, Sky(here.t), ref=ref)
     assert alone[1] == pytest.approx(1.0, abs=1e-6)
@@ -267,6 +351,11 @@ BASE = "name: t\nout: run\npattern: d/{field}_{band}.fits\n"
         (f"{BASE}colour: [f277w]\n", "needs three bands"),
         ("name: t\nout: [run\n", "isn't valid YAML"),
         ("- name\n", "should be a list of keys"),
+        (f"{BASE}settings:\n  compact_snr: 5\n", "Did you mean 'compact_sn'?"),
+        (f"{BASE}settings:\n  compact_sn: lots\n", "can't be 'lots'"),
+        (f"{BASE}settings:\n  skip: [rows]\n", "Did you mean 'row'?"),
+        (f"{BASE}settings:\n  compact_bands: [f150w]\n", "needs psf_sharpest"),
+        (f"{BASE}settings:\n  psf_sharpest: [1]\n", "need four each"),
     ],
 )
 def test_a_bad_config_says_what_is_wrong(tmp_path: Path, text: str, said: str) -> None:
@@ -300,10 +389,11 @@ def test_check_lists_missing_mosaics(tmp_path: Path) -> None:
         pattern=f"{tmp_path.as_posix()}/{{field}}_{{band}}.fits",
         device="cpu",
     )
-    problems = report(cfg)
-    assert [p for p in problems if p.startswith("missing")] == [
-        f"missing {tmp_path / f'a_{b}.fits'}" for b in ("f115w", "f150w", "f444w")
-    ]
+    want = [f"missing {tmp_path / f'a_{b}.fits'}" for b in ("f115w", "f150w", "f444w")]
+    assert [p for p in report(cfg) if p.startswith("missing")] == want
+    # with tiles too, though naming them reads the detection band's header
+    tiled = dataclasses.replace(cfg, fields=("a",), tile=1000)
+    assert [p for p in report(tiled) if p.startswith("missing")] == want
 
 
 def fake_run(out: Path, n: int) -> Config:
@@ -320,8 +410,8 @@ def fake_run(out: Path, n: int) -> Config:
     stamps[:, 0] = 255
     np.save(folder / "stamps.npy", stamps)
     cards, scale = wcs_record(band(np.zeros((200, 200), np.float32)).wcs)
-    meta = {"shape": [200, 200], "preview_scale": 1, "filters": ["A", "B", "C"]}
-    meta |= {"wcs": cards, "pixel_scale_arcsec": scale, "header": {}}
+    meta = {"shape": [200, 200], "filters": ["A", "B", "C"]}
+    meta |= {"wcs": cards, "pixel_scale_arcsec": scale}
     (folder / "field.json").write_text(json.dumps(meta), encoding="utf-8")
     return Config(name="test", out=out, pattern="{field}_{band}.fits")
 
@@ -332,7 +422,7 @@ def test_verdicts_train_the_model_and_lists_open_in_the_viewer(
     cfg = fake_run(tmp_path, 30)
     kinds = ["artifact", "not_anomalous", "interesting", "known"]
     for i in range(24):
-        save_verdict(tmp_path, f"a:{i + 1}", kinds[i % 4], False, "")
+        save_verdict(tmp_path, f"a:{i + 1}", kinds[i % 4])
     assert label_main(cfg, []) == 0
     assert (tmp_path / MODEL).is_file()
     assert rank_main(cfg, ["-n", "10"]) == 0
@@ -368,40 +458,65 @@ def test_one_list_can_mix_stamped_and_compact_objects(tmp_path: Path) -> None:
     assert (small == 77).all()
 
 
-def test_an_exported_list_gets_a_social_card(tmp_path: Path) -> None:
-    cfg = fake_run(tmp_path, 3)
-    Image.new("RGB", (200, 200), (40, 40, 40)).save(tmp_path / "fields/a/field.png")
-    offsets([0.0], [0.0]).assign(id=["a:1"], field="a", half=1.0).to_csv(
-        tmp_path / "rank.csv", index=False
-    )
-    site = tmp_path / "site"
-    bundle = ObjectBundle(cfg, tmp_path / "rank.csv", writable=False)
-    export(bundle, site)
-    (site / "index.html").write_text(
-        '<html><head><title>x</title><meta name="description" content="old" />\n'
-        "  </head></html>",
-        encoding="utf-8",
-    )
-    add_site_meta(bundle, site, "https://example.org/demo")
-    page = (site / "index.html").read_text(encoding="utf-8")
-    assert "The 1 oddest objects in test rank" in page
-    with Image.open(site / "social.png") as card:
-        assert card.size == (1200, 630)
-
-
-def test_cut_stops_with_the_way_round_when_gaia_is_down(
+def test_gaia_falls_back_to_a_copy_and_says_the_way_round_if_both_are_down(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import pyvo
 
-    def broken(*args: object, **kwargs: object) -> None:
-        raise pyvo.dal.DALFormatError(Exception())
+    star = gaia_star(RA0, DEC0, 15.0)
+    asked: list[str] = []
+    down = ["esa.int"]
 
-    monkeypatch.setattr(pyvo.dal, "TAPService", broken)
-    monkeypatch.setattr("jwst_peculiar.cut.GAIA_WAITS", (0, 0))
+    class Service:
+        def __init__(self, url: str, **_kwargs: object) -> None:
+            asked.append(url)
+            if any(d in url for d in down):
+                raise pyvo.dal.DALFormatError(Exception())
+
+        def run_sync(self, _q: str) -> Service:
+            return self
+
+        def to_table(self) -> Service:
+            return self
+
+        def to_pandas(self) -> pd.DataFrame:
+            return star
+
+    monkeypatch.setattr(pyvo.dal, "TAPService", Service)
     cfg = Config(name="t", out=tmp_path, pattern="{field}_{band}.fits")
+    got = gaia_stars(cfg, "a", offsets([0.0, 60.0], [0.0, 30.0]))
+    assert got.ra.tolist() == [RA0]
+    assert asked == list(cut.GAIA_TAP)
+    # cached, so a second cut asks nobody
+    assert gaia_stars(cfg, "a", offsets([0.0], [0.0])).ra.tolist() == [RA0]
+    assert len(asked) == 2
+    down.append("ari.uni")
+    monkeypatch.setattr("jwst_peculiar.cut.GAIA_WAITS", (0, 0))
     with pytest.raises(SystemExit, match="Set gaia: false to skip spikes"):
-        gaia_stars(cfg, "a", offsets([0.0], [0.0]))
+        gaia_stars(cfg, "b", offsets([0.0], [0.0]))
+
+
+def test_init_sorts_wide_filters_by_their_wavelength(tmp_path: Path) -> None:
+    for b in ("f277w", "f150w2", "f090w"):
+        (tmp_path / f"a_{b}.fits").touch()
+    assert guess(tmp_path)["colour"] == ["f277w", "f150w2", "f090w"]
+
+
+def test_gaia_is_asked_about_a_field_across_ra_0_and_not_the_whole_sky(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked: list[str] = []
+
+    def nothing(q: str, _name: str) -> pd.DataFrame:
+        asked.append(q)
+        return pd.DataFrame(columns=["ra", "dec", "phot_g_mean_mag"])
+
+    monkeypatch.setattr(cut, "_query_gaia", nothing)
+    cfg = Config(name="t", out=tmp_path, pattern="{field}_{band}.fits")
+    gaia_stars(cfg, "a", pd.DataFrame({"ra": [359.99, 0.01], "dec": [0.0, 0.0]}))
+    ra, radius = re.findall(r"CIRCLE\('ICRS', (\S+), \S+, ([\d.]+)\)", asked[0])[0]
+    assert float(ra) % 360 == pytest.approx(0, abs=1e-6)
+    assert float(radius) < 0.1
 
 
 @pytest.mark.parametrize(
@@ -552,7 +667,8 @@ def test_check_spots_a_mosaic_whose_download_stopped_early(tmp_path: Path) -> No
         pattern=f"{tmp_path.as_posix()}/{{field}}_{{band}}.fits",
         device="cpu",
     )
-    said = [p for p in report(cfg) if "stopped early" in p]
+    with pytest.warns(AstropyUserWarning, match="truncated"):
+        said = [p for p in report(cfg) if "stopped early" in p]
     assert said == [
         f"{short} is cut short or empty, so its download probably stopped early"
     ]
@@ -663,6 +779,40 @@ def test_check_says_what_tile_size_would_fit_in_memory(
     ]
 
 
+def test_one_source_repeated_in_an_even_row_is_flagged() -> None:
+    # dots 0.5" apart in a row, the same row split between the bands, a lone dot,
+    # three spaced 0.5" then 0.8", and a red dot with faint F277W dots in a row
+    both = [(60, 60), (72, 72), (84, 84), (150, 50), (150, 150), (162, 162)]
+    both += [(181, 181)]
+    faint = [(150, 100), (162, 112), (174, 124)]
+    rng = np.random.default_rng(5)
+    skies = []
+    for only, red in (([(60, 140), (72, 152)], 8), ([(84, 164)], 80)):
+        sky = rng.normal(0, 1, (200, 200)).astype(np.float32)
+        for x, y in both + only:
+            sky += gaussian(x, y, sigma=1.0, amp=50)
+        sky += gaussian(*faint[0], sigma=1.0, amp=red)
+        if red == 8:
+            for x, y in faint[1:]:
+                sky += gaussian(x, y, sigma=1.0, amp=8)
+        skies.append(band(sky))
+    xs, ys = [72, 60, 60, 150, 150, 150], [72, 60, 140, 50, 150, 100]
+    ra, dec = skies[0].wcs.pixel_to_world_values(xs, ys)
+    t = pd.DataFrame({"ra": ra, "dec": dec})
+    got = in_a_row(t, {"f277w": skies[0], "f444w": skies[1]})
+    assert got.tolist() == [True, True, True, False, False, False]
+
+
+def test_a_row_on_blank_sky_has_no_noise_to_measure_it_by() -> None:
+    sky = sum(gaussian(100 + 17 * k, 100, sigma=1.2, amp=50) for k in range(3))
+    b = band(np.asarray(sky, np.float32))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert in_a_row(offsets([0.0], [0.0]), {"f277w": b, "f444w": b}).tolist() == [
+            False
+        ]
+
+
 def test_trails_are_flagged_but_spiky_stars_and_galaxies_are_not() -> None:
     y, x = np.mgrid[:200, :200]
     noise = np.random.default_rng(3).normal(0, 1, (200, 200))
@@ -752,6 +902,7 @@ def test_a_faint_star_is_flagged_and_a_brown_dwarf_is_not() -> None:
     # 0.1" fluxes F115W to F444W in nJy, and F150W's 0.25" flux
     rows = {
         "star": ([40.0, 50.0, 15.0, 8.0], 60.0),
+        "cool star": ([30.0, 40.0, 21.0, 14.0], 50.0),
         "brown dwarf": ([10.0, 20.0, 15.0, 90.0], 24.0),
         "blue galaxy": ([40.0, 50.0, 15.0, 8.0], 150.0),
     }
@@ -761,6 +912,7 @@ def test_a_faint_star_is_flagged_and_a_brown_dwarf_is_not() -> None:
     t["f_f150w_25"] = [v[1] for v in rows.values()]
     assert dict(zip(rows, blue_star(t).tolist(), strict=True)) == {
         "star": True,
+        "cool star": True,
         "brown dwarf": False,
         "blue galaxy": False,
     }
@@ -773,12 +925,7 @@ def test_a_faint_star_is_flagged_and_a_brown_dwarf_is_not() -> None:
 def test_cached_weights_load_without_asking_the_hub(
     monkeypatch: pytest.MonkeyPatch, cached: set[str], *, offline: bool
 ) -> None:
-    import huggingface_hub
     from huggingface_hub import constants
-    import timm
-    import torch
-
-    from jwst_peculiar.embed import load_encoder
 
     seen = []
 
@@ -789,8 +936,8 @@ def test_cached_weights_load_without_asking_the_hub(
     def from_cache(_: str, name: str) -> str | None:
         return f"/cache/{name}" if name in cached else None
 
-    monkeypatch.setattr(huggingface_hub, "try_to_load_from_cache", from_cache)
-    monkeypatch.setattr(timm, "create_model", create_model)
+    monkeypatch.setattr("jwst_peculiar.embed.try_to_load_from_cache", from_cache)
+    monkeypatch.setattr("timm.create_model", create_model)
     monkeypatch.setattr(constants, "HF_HUB_OFFLINE", False)
     load_encoder("nano", torch.device("cpu"))
     assert seen == [offline]
@@ -942,7 +1089,7 @@ def test_verdicts_saved_by_a_spreadsheet_still_load(port: int, listed: Config) -
     }
     verdict = {"key": "a:3", "verdict": "known", "star": False, "note": ""}
     assert _ask(port, "POST", "/run/api/verdict", body=verdict)[0] == 200
-    save_verdict(listed.out, "a:1", None, False, "")
+    save_verdict(listed.out, "a:1", None)
     with (listed.out / "verdicts.csv").open(encoding="utf-8", newline="") as f:
         rows = list(csv.reader(f))
     assert rows[0] == ["key", "verdict", "star", "note", "updated", "mine"]
@@ -950,7 +1097,7 @@ def test_verdicts_saved_by_a_spreadsheet_still_load(port: int, listed: Config) -
     assert rows[1][5] == "keep me"
     assert rows[2][:4] == ["a:3", "known", "0", ""]
     with pytest.raises(ValueError, match="Unknown verdict"):
-        save_verdict(listed.out, "a:1", "odd", False, "")
+        save_verdict(listed.out, "a:1", "odd")
 
 
 def test_the_page_hears_why_verdicts_did_not_load(port: int, listed: Config) -> None:
@@ -977,6 +1124,16 @@ def test_export_leaves_a_folder_of_other_files_alone(
     site.mkdir()
     first = export(b, site)
     assert export(b, site) == first
+    # a new build of the viewer replaces the old one's assets, and a file of yours
+    # beside them stays
+    (site / "CNAME").write_text("example.org", encoding="utf-8")
+    for build in ("old", "new"):
+        app = tmp_path / build
+        (app / "assets").mkdir(parents=True)
+        (app / "assets" / f"{build}.js").write_text(build, encoding="utf-8")
+        export(b, site, app)
+    assert [p.name for p in (site / "assets").iterdir()] == ["new.js"]
+    assert (site / "CNAME").is_file()
 
 
 def test_site_meta_takes_any_name_and_url(listed: Config, tmp_path: Path) -> None:
@@ -1031,8 +1188,11 @@ def half_blank(tmp_path: Path) -> Config:
     rng = np.random.default_rng(3)
     y, x = np.mgrid[:600, :1500]
     sky = rng.normal(0, 1, (600, 1500)).astype(np.float32)
+    # off a regular grid, which the row test would rightly take for one source repeated
+    jitter = np.random.default_rng(4).uniform(-4, 4, (40, 2))
     for i in range(40):
         x0, y0, r = 30 + 12 * i, 40 + (i * 37) % 520, 2 + i % 5
+        x0, y0 = x0 + jitter[i, 0], y0 + jitter[i, 1]
         sky += 400 * np.exp(-((x - x0) ** 2 + (y - y0) ** 2) / (2 * r**2))
     # and one too small for a stamp in the next tile along
     sky += 30 * np.exp(-((x - 600) ** 2 + (y - 250) ** 2) / (2 * 1.5**2))
@@ -1055,6 +1215,30 @@ def half_blank(tmp_path: Path) -> Config:
     )
 
 
+def drops_what_artefact_models_reject(cfg: Config, models: Path) -> None:
+    # artefact models that call every candidate half an artefact, one way drawn 0.88
+    # and the other 0.12
+    with pytest.raises(SystemExit, match="but there's none"):
+        compact_main(dataclasses.replace(cfg, artefacts=models), ["-n", "2"])
+    halves = {}
+    for which, bias in (("peak", 2.0), ("snr", -2.0)):
+        net = classifier()
+        head = net[1]
+        assert isinstance(head, torch.nn.Linear)
+        torch.nn.init.zeros_(head.weight)
+        torch.nn.init.constant_(head.bias, bias)
+        halves[which] = net.state_dict()
+    for limit, kept in ((0.6, 2), (0.4, 0)):
+        torch.save({**halves, "cut": limit}, models)
+        assert (
+            compact_main(dataclasses.replace(cfg, artefacts=models), ["-n", "2"]) == 0
+        )
+        listed = pd.read_csv(cfg.out / "compact.csv")
+        assert len(listed) == kept
+        assert np.allclose(listed.artefact, 0.5)
+        assert len(np.load(cfg.out / "compact_stamps.npy")) == kept
+
+
 def test_a_tile_off_the_mosaic_is_left_out_of_every_step(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1062,15 +1246,10 @@ def test_a_tile_off_the_mosaic_is_left_out_of_every_step(
     asked: list[str] = []
 
     def a_star(q: str, _name: str) -> pd.DataFrame:
-        # one bright star in the middle of the box asked for
+        # one bright star in the middle of the cone asked for
         asked.append(q)
-        (r0, r1), (d0, d1) = re.findall(r"BETWEEN (\S+) AND (\S+)", q)
-        return pd.DataFrame({
-            "ra": [(float(r0) + float(r1)) / 2],
-            "dec": [(float(d0) + float(d1)) / 2],
-            "phot_g_mean_mag": [15.0],
-            "classprob_dsc_combmod_star": [1.0],
-        })
+        ra, dec = re.findall(r"CIRCLE\('ICRS', (\S+), (\S+),", q)[0]
+        return gaia_star(float(ra), float(dec), 15.0)
 
     monkeypatch.setattr(cut, "_query_gaia", a_star)
     assert cut_main(cfg, ["--workers", "1"]) == 0
@@ -1097,8 +1276,21 @@ def test_a_tile_off_the_mosaic_is_left_out_of_every_step(
     assert len(pd.read_csv(cfg.out / "rank.csv")) == 5
     assert compact_main(cfg, ["-n", "5"]) == 0
     assert len(pd.read_csv(cfg.out / "compact.csv")) == 5
+    drops_what_artefact_models_reject(cfg, tmp_path / "artefacts.pt")
+    # every test cut writes is one skip can name
+    written_flags = {
+        c[5:]
+        for name in ("objects.csv", "compact.csv")
+        for c in pd.read_csv(root / "a~0-0" / name, nrows=0).columns
+        if c.startswith("flag_")
+    }
+    assert written_flags == set(FLAGS)
     # a second cut leaves the empty tiles be
     assert cut_main(cfg, ["--workers", "1"]) == 0
+    assert (root / "a~0-0" / "embeddings.npy").is_file()
+    # and a redo drops the embeddings of the stamps it replaces
+    assert cut_main(cfg, ["--workers", "1", "--redo"]) == 0
+    assert not (root / "a~0-0" / "embeddings.npy").exists()
 
 
 def test_one_field_failing_leaves_the_rest_cut(
@@ -1111,9 +1303,197 @@ def test_one_field_failing_leaves_the_rest_cut(
         if name == "a~0-1":
             msg = "broken"
             raise ValueError(msg)
+        if name == "a~1-0":
+            msg = "Couldn't query Gaia"
+            raise SystemExit(msg)
         return f"{name}: cut"
 
     monkeypatch.setattr(cut, "cut_field", cut_or_fail)
-    with pytest.raises(SystemExit, match="a~0-1: broken"):
+    with pytest.raises(SystemExit, match=r"a~0-1: broken\na~1-0: Couldn't query Gaia"):
         cut_main(cfg, ["--workers", "1"])
     assert "a~1-1: cut" in capsys.readouterr().out
+
+
+def test_like_takes_seeds_by_id_or_position(tmp_path: Path) -> None:
+    cfg = fake_run(tmp_path, 30)
+    t = pd.read_csv(tmp_path / "fields" / "a" / "objects.csv")
+    at = f"{t.ra.iloc[6]},{t.dec.iloc[6]}"
+    assert like_main(cfg, ["a:3", at, "-n", "5"]) == 0
+    like = pd.read_csv(tmp_path / "like.csv")
+    assert len(like) == 5
+    assert not {"a:3", "a:7"} & set(like.id)
+    with pytest.raises(SystemExit, match="No object in the run matches"):
+        like_main(cfg, ["a:999"])
+
+
+def test_a_sample_skips_the_top_and_whatever_has_a_verdict(tmp_path: Path) -> None:
+    cfg = fake_run(tmp_path, 160)
+    assert rank_main(cfg, ["-n", "160", "--image-only"]) == 0
+    order = pd.read_csv(tmp_path / "rank.csv")
+    judged = str(order.id.iloc[120])
+    save_verdict(tmp_path, judged, "artifact")
+    assert rank_main(cfg, ["--sample", "-n", "20", "--image-only"]) == 0
+    sample = pd.read_csv(tmp_path / "sample.csv")
+    assert len(sample) == 20
+    assert (sample["rank"] > 100).all()
+    assert judged not in set(sample.id)
+
+
+def test_label_wants_five_verdicts_of_each_kind(tmp_path: Path) -> None:
+    cfg = fake_run(tmp_path, 30)
+    save_verdict(tmp_path, "a:1", "artifact")
+    with pytest.raises(SystemExit, match="at least 5 verdicts of each kind"):
+        label_main(cfg, [])
+
+
+def test_embed_writes_each_field_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = dataclasses.replace(fake_run(tmp_path, 5), device="cpu")
+    target = tmp_path / "fields" / "a" / "embeddings.npy"
+    target.unlink()
+
+    def pool(*_args: object) -> torch.nn.Module:
+        return torch.nn.Sequential(torch.nn.AdaptiveAvgPool2d(1), torch.nn.Flatten())
+
+    monkeypatch.setattr("jwst_peculiar.embed.load_encoder", pool)
+    assert embed_main(cfg, []) == 0
+    assert np.load(target).shape == (5, 3)
+    np.save(target, np.zeros((5, 3), np.float32))
+    assert embed_main(cfg, []) == 0
+    assert not np.load(target).any()
+    assert embed_main(cfg, ["--redo"]) == 0
+    assert np.load(target).any()
+
+
+def test_a_device_that_is_not_there_fails_early(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+    assert resolve_device("auto") == torch.device("cpu")
+    for spec in ("cuda", "mps"):
+        with pytest.raises(RuntimeError, match="asks for"):
+            resolve_device(spec)
+
+
+def test_the_encoder_says_it_needs_the_internet_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def offline(*_args: object, **_kwargs: object) -> torch.nn.Module:
+        raise OSError
+
+    monkeypatch.setattr("timm.create_model", offline)
+    with pytest.raises(SystemExit, match="needs the internet once"):
+        load_encoder("nano", torch.device("cpu"))
+
+
+def test_init_writes_a_config_once_that_finds_its_mosaics(tmp_path: Path) -> None:
+    folder = tmp_path / "data" / "mosaics"
+    folder.mkdir(parents=True)
+    for b in ("f115w", "f150w", "f277w", "f444w"):
+        (folder / f"a1_nircam_clear-{b}_i2d.fits").touch()
+    config = tmp_path / "configs" / "mine.yaml"
+    config.parent.mkdir()
+    assert init_main([str(folder), str(config)]) == 0
+    keys = yaml.safe_load(config.read_text(encoding="utf-8"))
+    assert keys["name"] == "mine"
+    assert keys["out"] == "runs/mine"
+    # the config sits elsewhere, so the pattern names the folder in full
+    assert (
+        keys["pattern"]
+        == f"{folder.resolve().as_posix()}/{{field}}_nircam_clear-{{band}}_i2d.fits"
+    )
+    with pytest.raises(SystemExit, match="already there"):
+        init_main([str(folder), str(config)])
+
+
+def test_a_verdict_that_cant_be_saved_says_why(
+    port: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def locked(*_args: object, **_kwargs: object) -> str:
+        raise PermissionError
+
+    monkeypatch.setattr("jwst_peculiar.server.save_verdict", locked)
+    here = f"http://127.0.0.1:{port}"
+    verdict = {"key": "a:3", "verdict": "artifact"}
+    status, body = _ask(port, "POST", "/run/api/verdict", body=verdict, Origin=here)
+    assert status == 500
+    assert b"Couldn't save it" in body
+
+
+def test_view_exports_a_named_site_and_wants_a_list_first(
+    listed: Config, tmp_path: Path
+) -> None:
+    with pytest.raises(SystemExit, match="Run jwst-peculiar rank"):
+        view_main(listed, ["--list", "like.csv"])
+    site = tmp_path / "site"
+    url = "https://example.org/demo"
+    assert (
+        view_main(listed, ["--export", str(site), "--name", "Demo", "--site-url", url])
+        == 0
+    )
+    index = json.loads((site / "run" / "index.json").read_text(encoding="utf-8"))
+    assert index["run"]["name"] == "Demo"
+    page = (site / "index.html").read_text(encoding="utf-8")
+    assert "<title>Demo · jwst-peculiar</title>" in page
+    assert "The 3 oddest objects in Demo" in page
+    assert (site / "sitemap.xml").is_file()
+    with Image.open(site / "social.png") as card:
+        assert card.size == (1200, 630)
+
+
+def test_a_list_with_nothing_unflagged_is_empty() -> None:
+    t = offsets([0.0], [0.0]).assign(id="a:1", field="a", label=1, sn=9.0, flag_x=True)
+    t["a_arcsec"] = 0.1
+    assert compact.ranked(t, 5).empty
+
+
+def test_fields_named_with_digits_keep_their_leading_zero(tmp_path: Path) -> None:
+    cfg = fake_run(tmp_path, 3)
+    (tmp_path / "fields" / "a").rename(tmp_path / "fields" / "01")
+    t = pd.read_csv(tmp_path / "fields" / "01" / "objects.csv").assign(field="01")
+    t.to_csv(tmp_path / "fields" / "01" / "objects.csv", index=False)
+    assert rank_main(cfg, ["-n", "3"]) == 0
+    listed = ObjectBundle(cfg, tmp_path / "rank.csv", writable=False)
+    assert {e["key"].split(":")[0] for e in listed.index["tiles"]} == {"01"}
+
+
+def test_cutting_in_parallel_gives_what_one_at_a_time_does(tmp_path: Path) -> None:
+    serial = half_blank(tmp_path)
+    parallel = dataclasses.replace(serial, out=tmp_path / "run2")
+    assert cut_main(serial, ["--workers", "1"]) == 0
+    assert cut_main(parallel, ["--workers", "2"]) == 0
+    assert parallel.cut_fields() == serial.cut_fields()
+    for f in serial.cut_fields():
+        for name in ("objects.csv", "segments.csv", "stamps.npy"):
+            one = (serial.out / "fields" / f / name).read_bytes()
+            assert (parallel.out / "fields" / f / name).read_bytes() == one
+
+
+def test_blue_listed_stars_and_bright_halos_are_flagged() -> None:
+    # a blue star too bright for its own halo to matter, a faint red one in that
+    # halo, one well clear of it, a red one too bright for it, and a faint red one
+    # by a bright point source Gaia doesn't list
+    t = offsets([0.0, 1.5, 30.0, 0.0, 61.0], [0.0, 0.0, 0.0, 1.5, 0.0]).assign(
+        f_f150w_25=[2.0, 1, 1, 1, 1],
+        f_f444w_25=[1.0, 2, 2, 2, 2],
+        f_f277w_25=[10.0, 1, 1, 10, 1],
+    )
+    stars = offsets([0.1], [0.0])
+    segments = offsets([0.1, 60.0], [0.0, 0.0]).assign(
+        sn=[10.0, 200.0],
+        f_f150w_10=[1.0, 0.8],
+        f_f150w_25=[1.0, 1.0],
+        f_f277w_10=[1.0, 600.0],
+        f_f277w_25=[100.0, 1000.0],
+    )
+    assert listed_star(t, stars, segments).tolist() == [True, True, False, False, True]
+    assert not listed_star(t, stars.iloc[:0], segments.iloc[:0]).any()
+
+
+def test_a_piece_inside_its_parents_stamp_is_flagged() -> None:
+    objects = offsets([0.0], [0.0]).assign(parent=7)
+    t = offsets([0.3, 2.0, 0.1], [0.0, 0.0, 0.0]).assign(parent=[7, 7, 9])
+    assert piece(t, objects).tolist() == [True, False, False]
+    assert not piece(t, objects.iloc[:0]).any()

@@ -103,7 +103,7 @@
     }
     ctx.globalAlpha = 1;
     const s = tile.size * scale;
-    // Chalk, as red is kept for the ring on the plate.
+    // in chalk, so this object's box stands apart from the dots
     ctx.strokeStyle = v('--chalk');
     ctx.lineWidth = 1.5;
     ctx.strokeRect(px(tile) - s / 2 + 0.5, py(tile) - s / 2 + 0.5, s, s);

@@ -1,7 +1,6 @@
 """`unzip FOLDER`: expand every .gz mosaic in a folder and delete the .gz.
 
-astropy can read a .fits.gz directly, but it can't memory-map one, so a big mosaic
-would have to fit in RAM.
+astropy can't memory-map a .fits.gz, so a big one would have to fit in RAM.
 """
 
 from __future__ import annotations
@@ -13,14 +12,10 @@ import shutil
 
 
 def decompress_dir(base_dir: Path) -> int:
-    """Expand each x.gz in `base_dir` to x and delete x.gz.
-
-    Returns:
-        How many archives there were.
-    """
+    """Expand each x.gz in `base_dir` to x and delete x.gz."""
     gz_paths = sorted(base_dir.glob("*.gz"))
     for gz_path in gz_paths:
-        print(f"expanding {gz_path.name}", flush=True)  # noqa: T201 the command's progress
+        print(f"expanding {gz_path.name}", flush=True)
         out_path = gz_path.with_suffix("")
         # under another name until it's whole, so a broken archive or a Ctrl+C
         # doesn't leave half a FITS file that cut would open
@@ -37,13 +32,9 @@ def decompress_dir(base_dir: Path) -> int:
 
 
 def main(argv: list[str]) -> int:
-    """Expand the archives in the folder named on the command line.
-
-    Returns:
-        0.
-    """
+    """Expand the archives in the folder named on the command line."""
     p = argparse.ArgumentParser(prog="jwst-peculiar unzip FOLDER")
     p.add_argument("folder", type=Path)
     n = decompress_dir(p.parse_args(argv).folder)
-    print(f"expanded {n} files")  # noqa: T201 the command's result
+    print(f"expanded {n} files")
     return 0

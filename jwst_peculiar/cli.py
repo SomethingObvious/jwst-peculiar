@@ -1,13 +1,5 @@
 """The `jwst-peculiar` command, one step of the object search at a time.
 
-`cut` detects objects in each field and cuts their stamps, `embed` turns the stamps
-into Zoobot embeddings, `rank` writes the rarity list, `like` finds the objects most
-like a seed, `view` opens a list in the web viewer to judge, and `label` picks a
-sample to judge, whose verdicts train the classifier `rank` weights rarity by.
-`compact` ranks the small sources `cut` leaves without a stamp on their colours,
-`init` writes a config for a folder of mosaics, and `check` says what a config finds
-before any of that runs.
-
 Each step's module is imported only when it runs, so `--help` doesn't wait for torch.
 """
 
@@ -48,7 +40,7 @@ STEP_HELP = """steps:
   embed    Zoobot embeddings of the stamps, on the GPU if there is one
   rank     the rarity list, with the label model once there are verdicts
   like     the objects that look most like ones you give
-  label    a random sample to give verdicts on in the viewer
+  label    fit the label model on the verdicts given in the viewer
   view     open a list in the browser
   compact  the list of sources too small for a stamp
 
@@ -56,21 +48,14 @@ jwst-peculiar STEP CONFIG --help shows a step's own options."""
 
 
 def run(cfg: Config, rest: list[str]) -> int:
-    """Check, cut, embed, rank and list compact sources, stopping at a failed step.
-
-    Returns:
-        The first nonzero exit code, or 0.
-    """
-    from jwst_peculiar import compact  # noqa: PLC0415 these load torch and scikit-learn
-    from jwst_peculiar.check import main as check  # noqa: PLC0415 as above
-    from jwst_peculiar.cut import main as cut  # noqa: PLC0415 as above
-    from jwst_peculiar.embed import main as embed  # noqa: PLC0415 as above
-    from jwst_peculiar.rank import main as rank  # noqa: PLC0415 as above
-
-    steps = [(check, []), (cut, rest), (embed, []), (rank, ["rank"])]
-    if compact.has_bands(cfg):
-        steps.append((compact.main, []))
-    for step, args in steps:
+    """Check, cut, embed, rank and list compact sources, stopping at a failed step."""
+    steps = [("check", []), ("cut", rest), ("embed", []), ("rank", ["rank"])]
+    if import_module("jwst_peculiar.compact").has_bands(cfg):
+        steps.append(("compact", []))
+    for name, args in steps:
+        step: Callable[[Config, list[str]], int] = import_module(
+            f"jwst_peculiar.{name}"
+        ).main
         code = step(cfg, args)
         if code:
             return code
@@ -101,11 +86,7 @@ def _step(step: str, config: Path, rest: list[str]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run one step of the object search.
-
-    Returns:
-        The step's exit code.
-    """
+    """Run one step of the object search."""
     # Piped output on Windows uses the ANSI code page, so printing a path with
     # other letters in it would crash. This escapes them the way stderr does.
     if isinstance(sys.stdout, io.TextIOWrapper):

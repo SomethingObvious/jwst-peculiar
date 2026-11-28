@@ -1,22 +1,27 @@
 """`embed`: Zoobot embeddings of every field's stamps.
 
-The encoder is Zoobot's ConvNeXt-nano, loaded through timm from its Apache-2.0
-weights on the Hugging Face hub. Each stamp is embedded in its four turns and their
-mirror images, and the mean is normalised to unit length, so an object's embedding
-doesn't depend on which way it faces.
+Each stamp is embedded in its eight turns and mirror images and the mean normalised,
+so an embedding doesn't depend on which way the object faces.
 """
 
 from __future__ import annotations
 
 import argparse
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, cast
 
+from huggingface_hub import constants, try_to_load_from_cache
 import numpy as np
+import timm
 import torch
 
 from jwst_peculiar.config import written
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+
+    import numpy.typing as npt
+
     from jwst_peculiar.config import Config
 
 BATCH = 32
@@ -27,14 +32,7 @@ ENCODERS = {
 
 
 def resolve_device(spec: str) -> torch.device:
-    """Find the device a --device value names, failing early when it isn't there.
-
-    Returns:
-        The device, with "auto" picking CUDA, then MPS, then the CPU.
-
-    Raises:
-        RuntimeError: If it names CUDA or MPS and torch can't see one.
-    """
+    """Find the device a --device value names, failing early when it isn't there."""
     if spec == "auto":
         if torch.cuda.is_available():
             return torch.device("cuda")
@@ -52,18 +50,7 @@ def resolve_device(spec: str) -> torch.device:
 
 
 def load_encoder(size: str, device: torch.device) -> torch.nn.Module:
-    """Return a Zoobot encoder with its classifier head removed.
-
-    Raises:
-        SystemExit: When timm, which loads the encoder, isn't installed.
-    """
-    try:
-        import timm  # noqa: PLC0415 only embed needs it
-    except ImportError as err:
-        msg = "embed needs timm: pip install timm"
-        raise SystemExit(msg) from err
-    from huggingface_hub import constants, try_to_load_from_cache  # noqa: PLC0415 comes with timm
-
+    """Return a Zoobot encoder with its classifier head removed."""
     repo = ENCODERS[size].removeprefix("hf_hub:")
 
     def have(name: str) -> bool:
@@ -92,12 +79,13 @@ def load_encoder(size: str, device: torch.device) -> torch.nn.Module:
     return net.eval().to(device)
 
 
-def embed(stamps: Any, net: torch.nn.Module, *, device: torch.device) -> Any:  # noqa: ANN401 uint8 stamps in, float32 rows out
-    """Embed (n, N, N, 3) uint8 stamps as the mean over eight orientations.
-
-    Returns:
-        (n, d) float32 rows of unit length.
-    """
+def _over_views(
+    stamps: npt.NDArray[np.uint8],
+    f: Callable[[torch.Tensor], torch.Tensor],
+    *,
+    device: torch.device,
+) -> torch.Tensor:
+    # the mean of f over each stamp's four turns and their mirror images
     out = []
     with torch.inference_mode():
         # once even with no stamps, so a tile with no objects gets (0, d) rows
@@ -107,16 +95,45 @@ def embed(stamps: Any, net: torch.nn.Module, *, device: torch.device) -> Any:  #
             x = torch.from_numpy(chunk).to(device).float().div(255).permute(0, 3, 1, 2)
             turns = [torch.rot90(x, k, (2, 3)) for k in range(4)]
             views = turns + [v.flip(3) for v in turns]
-            out.append(torch.stack([net(v).float() for v in views]).mean(0).cpu())
-    return torch.nn.functional.normalize(torch.cat(out), dim=1).numpy()
+            out.append(torch.stack([f(v).float() for v in views]).mean(0).cpu())
+    return torch.cat(out)
+
+
+def embed(
+    stamps: npt.NDArray[np.uint8], net: torch.nn.Module, *, device: torch.device
+) -> npt.NDArray[np.float32]:
+    """Embed (n, N, N, 3) uint8 stamps as the mean over eight orientations."""
+    return torch.nn.functional.normalize(
+        _over_views(stamps, net, device=device), dim=1
+    ).numpy()
+
+
+def classifier() -> torch.nn.Sequential:
+    """Return Zoobot nano's shape with a one-unit head, as artefact models are saved."""
+    net = timm.create_model("convnext_nano", pretrained=False, num_classes=0)
+    return torch.nn.Sequential(net, torch.nn.Linear(cast("int", net.num_features), 1))
+
+
+def artefact_chances(
+    path: Path, tiles: dict[str, npt.NDArray[np.uint8]], *, device: torch.device
+) -> tuple[npt.NDArray[np.float32], float]:
+    """Return each tile's mean chance of being an artefact, and the cut saved with them.
+
+    `tiles` holds the same candidates drawn each way the file has a model for.
+    """
+    saved = torch.load(path, map_location="cpu", weights_only=True)
+    out = []
+    for which, drawn in tiles.items():
+        net = classifier()
+        net.load_state_dict(saved[which])
+        net.eval().to(device)
+        chance = torch.nn.Sequential(net, torch.nn.Sigmoid())
+        out.append(_over_views(drawn, chance, device=device)[:, 0])
+    return torch.stack(out).mean(0).numpy(), float(saved["cut"])
 
 
 def main(cfg: Config, argv: list[str]) -> int:
-    """Embed every cut field that has no embeddings yet.
-
-    Returns:
-        0.
-    """
+    """Embed every cut field that has no embeddings yet."""
     p = argparse.ArgumentParser(prog="jwst-peculiar embed CONFIG")
     p.add_argument("--encoder", choices=ENCODERS, default="nano")
     p.add_argument("--redo", action="store_true", help="embed fields already embedded")
@@ -133,5 +150,5 @@ def main(cfg: Config, argv: list[str]) -> int:
             rows = embed(stamps, net, device=device).astype(np.float32)
             with written(target) as tmp:
                 np.save(tmp, rows)
-            print(f"{folder.name}: {len(stamps)} stamps embedded", flush=True)  # noqa: T201 the command's progress
+            print(f"{folder.name}: {len(stamps)} stamps embedded", flush=True)
     return 0

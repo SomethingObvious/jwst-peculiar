@@ -8,7 +8,7 @@ On 148 COSMOS-Web fields (185,811 stamps) it took 2 hours 10 minutes on a laptop
 
 ## How Well It Works
 
-It was judged once on 21 COSMOS-Web observations it had never seen, against goals written down before the run, with the top 100 labelled blind by a single labeller with no second check. It had 57 worth a second look and no artefacts. It found 0.41 of the known odd objects in its top 1% of systems and 0.59 in its top 5%, short of the 0.70 goal, mostly as it finds mergers and rings well and lenses badly. The compact list found 235 of 330 known little red dots and brown dwarfs in its top 5% on development fields (295 after later changes to its artefact tests), but about half its top 100 on the held-out block were artefacts. After those changes it was 30 of 100 on development fields, which haven't been judged blind. [objects-plan.md](https://github.com/SomethingObvious/jwst-peculiar/blob/main/docs/objects-plan.md) has every goal and result.
+It was judged once on 21 COSMOS-Web observations it had never seen, against goals written down before the run, with the top 100 labelled blind by a single labeller with no second check. It had 57 worth a second look and no artefacts. It found 0.41 of the known odd objects in its top 1% of systems and 0.59 in its top 5%, short of the 0.70 goal, mostly as it finds mergers and rings well and lenses badly. The compact list found 235 of 330 known little red dots and brown dwarfs in its top 5% on development fields (295 after later changes to its artefact tests), but about half its top 100 on the held-out block were artefacts. After those changes it was 30 of 100 on development fields, which haven't been judged blind. A third test on UNCOVER and JADES, two surveys it had never seen, met every goal on UNCOVER. JADES had 45 worth a look in the main top 100 against a goal of 50 and 42 artefacts in the compact top 100 against 40, most of them dots in a short line from something moving between exposures. A test for those rows of dots came next, and a fourth test on GOODS-North with it had 51 worth a look and 1 artefact in the main top 100 and 38 artefacts in the compact top 100, only 3 of them moving dots. It found 3 of the 6 known little red dots inside the mosaic against a goal of 70%, though two of the misses sit where a band has no coverage. A fifth test on PRIMER-UDS had 64 worth a look and no artefacts in the main top 100, and put 83 of the 117 known little red dots there in the compact top 5%, but 62 of the compact top 100 were artefacts, mostly noise, short-wave stripes and hot pixels. A test for those dots came next, and a sixth test on CEERS had 53 worth a look and 4 artefacts in the main top 100, 45 of 57 known little red dots in the compact top 5%, and 49 artefacts in the compact top 100, most of them faint stars. After looser star colours, a seventh test on NGDEEP had 47 worth a look and 2 artefacts in the main top 100, 6 of 10 known little red dots in the compact catalogue and 43 artefacts in the compact top 100, most of them stripes. That made four fresh surveys out of six where the compact list missed its artefact goal, so the goal is recorded as unmet and the rounds of fixes stopped there. [objects-plan.md](https://github.com/SomethingObvious/jwst-peculiar/blob/main/docs/objects-plan.md) has every goal and result.
 
 ## Install and Run
 
@@ -36,7 +36,7 @@ jwst-peculiar view survey.yaml
 jwst-peculiar label survey.yaml
 ```
 
-`run` checks the config, then cuts, embeds and ranks, and lists the compact sources when the bands allow it. [Usage](https://github.com/SomethingObvious/jwst-peculiar/blob/main/docs/usage.md#objects) covers each step on its own and how to label well.
+`run` checks the config, then cuts, embeds and ranks, and lists the compact sources when the bands allow it. [Usage](https://github.com/SomethingObvious/jwst-peculiar/blob/main/docs/usage.md) covers each step on its own and how to label well.
 
 ## Try It on Public Data
 
@@ -57,7 +57,7 @@ On a laptop `cut` took a minute and 3.7 GB of memory, and `embed` took 22 second
 
 ## What It Won't Do
 
-A stamp needs S/N over 40 and a semimajor axis over 0.12", so anything smaller only reaches the compact list, which needs all four bands. Rarity is relative to the fields you give it, so whatever is common there counts as ordinary, though `rank --reference` can add a bigger survey's objects to compare against. Nothing it lists is a discovery until someone has looked at the data.
+By default a stamp needs S/N over 40 and a semimajor axis over 0.12", so anything smaller only reaches the compact list, which needs four bands. Those and the other thresholds can be changed under `settings:` in the config, as [the usage guide](docs/usage.md#settings) shows, though they were tuned on COSMOS-Web's F115W, F150W, F277W and F444W. Rarity is relative to the fields you give it, so whatever is common there counts as ordinary, though `rank --reference` can add a bigger survey's objects to compare against. Nothing it lists is a discovery until someone has looked at the data.
 
 ## Tests
 

@@ -1,20 +1,8 @@
-"""The step 2 artefact tests, each written to an object table as a `flag_*` column.
-
-- `one_band`: under 3 sigma in all but one band in the 0.25" aperture.
-- `target_star`: a listed star within 0.3" of the centre.
-- `blob`: a one-band peak anywhere in the stamp at least a tenth as bright as the
-  object. These are cosmic rays and hot pixels that drizzling left behind.
-- `star`: a listed star in the stamp, other than the object, at least a tenth as
-  bright.
-- `spike`: the stamp touches a Gaia star's six diffraction spikes or its halo.
-- `edge`: the stamp reaches uncovered sky in a colour band.
-- `merged`: a deblended piece inside the stamp of its parent's brightest unflagged
-  piece, so the same galaxy twice.
-"""
+"""The artefact tests on stamped objects, each a `flag_*` column."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 import warnings
 
 import numpy as np
@@ -37,6 +25,8 @@ BRIGHT, SELF_R, DETECTED, MIN_BANDS = 0.1, 0.3, 3.0, 2
 STAR_PROB = 0.5  # Gaia's own threshold on its star probability
 # Measured on 1,921 Gaia star visits in COSMOS-Web, in F277W.
 SPIKE_L0, SPIKE_SLOPE, SPIKE_WIDTH = 4.70, 0.215, 0.15
+# half the 5-pixel box a star's brightness is read in
+HALF_BOX = 2
 HALO_R0, HALO_SLOPE = 2.30, 0.073
 
 
@@ -51,14 +41,7 @@ COARSE = grid(56)
 
 
 def stamp_pixels(band: Band, corners: SkyCoords, grid: Grid) -> list[Floats]:
-    """Return the rows and columns in `band` of a grid over one stamp.
-
-    `corners` are the stamp's centre, right edge and top edge on the sky. Over one
-    stamp the mapping between two pixel grids is close enough to linear.
-
-    Returns:
-        Rows and columns, ready for `map_coordinates`.
-    """
+    """Return the rows and columns in `band` of a grid over one stamp."""
     gx, gy = grid
     cx, cy = (np.asarray(v, float) for v in band.wcs.world_to_pixel(corners))
     rows = cy[0] + gx * (cy[1] - cy[0]) + gy * (cy[2] - cy[0])
@@ -66,26 +49,27 @@ def stamp_pixels(band: Band, corners: SkyCoords, grid: Grid) -> list[Floats]:
     return [rows, cols]
 
 
-def mid_dec(t: pd.DataFrame) -> float:
-    """Return the declination to project `t` around, any at all when it's empty.
+def mid_sky(t: pd.DataFrame) -> tuple[float, float]:
+    """Return the RA and Dec to project `t` around, any at all when it's empty."""
+    ra = np.radians(t.ra.to_numpy(float))
+    ra = ra[np.isfinite(ra)]
+    if not len(ra):
+        return 0.0, 0.0
+    # a circular mean, so a field across RA 0 has its middle near 0 and not 180
+    ra0 = np.degrees(np.arctan2(np.sin(ra).mean(), np.cos(ra).mean())) % 360
+    return float(ra0), float(t.dec.median())
 
-    Returns:
-        Degrees.
-    """
-    return float(t.dec.median()) if len(t) else 0.0
 
-
-def sky_xy(ra: Any, dec: Any, dec0: float) -> Floats:  # noqa: ANN401 arrays or columns
-    """Return positions in arcsec on a flat sky, with one cos(dec) for the field.
-
-    One cos(dec) for the whole field keeps offsets between objects right.
-
-    Returns:
-        (n, 2) east and north in arcsec.
-    """
-    cos = np.cos(np.radians(dec0))
+def sky_xy(
+    ra: Floats | pd.Series[float],
+    dec: Floats | pd.Series[float],
+    mid: tuple[float, float],
+) -> Floats:
+    """Return positions in arcsec on a flat sky around `mid`, from `mid_sky`."""
+    ra0, dec0 = mid
+    east = (np.asarray(ra, float) - ra0 + 180) % 360 - 180
     return np.column_stack([
-        np.asarray(ra, float) * cos * 3600,
+        east * np.cos(np.radians(dec0)) * 3600,
         np.asarray(dec, float) * 3600,
     ])
 
@@ -143,17 +127,8 @@ def _lone_peaks(bands: dict[str, Band], name: str) -> pd.DataFrame:
 
 
 def blobs(bands: dict[str, Band], colour: tuple[str, ...]) -> pd.DataFrame:
-    """Find peaks 10 sigma over a ring 0.25" out in one band that no other band has.
-
-    A peak is lone when in every other band the brightest pixel within 0.1" rises
-    less than `max(4 sigma, excess / 20)` over that band's own ring. A cosmic ray on a
-    galaxy passes the first test and fails the second, since the galaxy is there in
-    every band. A real source of any colour shows in a neighbouring band at more
-    than a twentieth of its contrast, as NIRCam PSF peaks differ by at most about 8.
-
-    Returns:
-        One row per lone peak, with its band, position and peak value.
-    """
+    """Find peaks 10 sigma over a ring 0.25" out in one band that no other band has."""
+    # NIRCam's PSF peaks differ by 8 at most, so a real source shows at a twentieth
     return pd.concat([_lone_peaks(bands, b) for b in colour], ignore_index=True)
 
 
@@ -163,7 +138,7 @@ class StampBoxes:
     def __init__(self, t: pd.DataFrame, grid: Band) -> None:
         """Place every object's stamp on `grid`."""
         self.t, self.grid = t, grid
-        self.dec0 = mid_dec(t)
+        self.mid = mid_sky(t)
         self.cx, self.cy = grid.pixels(t.ra.to_numpy(float), t.dec.to_numpy(float))
         self.half = t.half.to_numpy(float)
         self.hpx = self.half / grid.scale
@@ -173,19 +148,17 @@ class StampBoxes:
         x, y, h = self.cx[i], self.cy[i], self.hpx[i]
         return self.grid.wcs.pixel_to_world([x, x + h, x], [y, y, y + h])
 
-    def count(self, sky: Grid, value: Floats, *, skip_self: bool) -> Any:  # noqa: ANN401 an int array
-        """Count positions inside each stamp at least a tenth as bright as its object.
-
-        Returns:
-            One count per object.
-        """
+    def count(
+        self, sky: Grid, value: Floats, *, skip_self: bool
+    ) -> npt.NDArray[np.int_]:
+        """Count positions in each stamp at least a tenth as bright as its object."""
         n = np.zeros(len(self.t), int)
         if not len(sky[0]):
             return n
         px, py = self.grid.pixels(*sky)
         reach = self.half * np.sqrt(2) + 0.01
-        near = cKDTree(sky_xy(*sky, self.dec0)).query_ball_point(
-            sky_xy(self.t.ra, self.t.dec, self.dec0), reach
+        near = cKDTree(sky_xy(*sky, self.mid)).query_ball_point(
+            sky_xy(self.t.ra, self.t.dec, self.mid), reach
         )
         floor = BRIGHT * self.t.max_value.to_numpy(float)
         for i, hits in enumerate(near):
@@ -198,11 +171,7 @@ class StampBoxes:
         return n
 
     def uncovered(self, colour: list[Band]) -> Bools:
-        """Say which stamps reach uncovered sky, NaN or exactly 0, in any colour band.
-
-        Returns:
-            One flag per object.
-        """
+        """Say which stamps reach uncovered sky, NaN or exactly 0, in a colour band."""
         out = np.zeros(len(self.t), bool)
         for b in colour:
             cov = (np.isfinite(b.raw) & (b.raw != 0)).astype(np.float32)
@@ -241,20 +210,14 @@ def _touches(
 def on_spikes(
     t: pd.DataFrame, gaia: pd.DataFrame, *, roll: float | None, square: bool = True
 ) -> Bools:
-    """Say which stamps touch a Gaia star's six spikes or its halo.
-
-    The spikes run at `PA_V3 + 60 k` degrees, and without a roll angle only halos
-    count. With `square` off, `half` is a radius around a point, not a stamp.
-
-    Returns:
-        One flag per object.
-    """
+    """Say which stamps touch a Gaia star's six spikes or its halo."""
+    # without a roll angle only halos count, and with `square` off `half` is a radius
     hit = np.zeros(len(t), bool)
     star = gaia.loc[gaia.classprob_dsc_combmod_star.to_numpy(float) > STAR_PROB]
     if not len(star) or not len(t):
         return hit
-    dec0 = mid_dec(t)
-    sxy, oxy = sky_xy(star.ra, star.dec, dec0), sky_xy(t.ra, t.dec, dec0)
+    mid = mid_sky(t)
+    sxy, oxy = sky_xy(star.ra, star.dec, mid), sky_xy(t.ra, t.dec, mid)
     mag = star.phot_g_mean_mag.to_numpy(float)
     th = None if roll is None else np.radians(roll + np.arange(0, 360, 60))
     axes = None if th is None else np.c_[np.sin(th), np.cos(th)]
@@ -270,17 +233,11 @@ def on_spikes(
 
 
 def merged(t: pd.DataFrame, bad: Bools) -> Bools:
-    """Say which deblended pieces sit in the stamp of their parent's brightest piece.
-
-    Only unflagged pieces count, as pieces and as the brightest.
-
-    Returns:
-        True for those pieces, which are the same galaxy as that brightest piece.
-    """
+    """Say which deblended pieces sit in the stamp of their parent's brightest piece."""
     out = np.zeros(len(t), bool)
-    x, y = sky_xy(t.ra, t.dec, mid_dec(t)).T
+    x, y = sky_xy(t.ra, t.dec, mid_sky(t)).T
     for _, g in t.loc[~bad].groupby("parent"):
-        if len(g) < 2:  # noqa: PLR2004 one piece has nothing to merge with
+        if len(g) <= 1:
             continue
         idx = g.index.to_numpy()
         top = int(idx[np.argmax(g.segment_flux.to_numpy(float))])
@@ -298,13 +255,14 @@ def known_stars(cfg: Config) -> pd.DataFrame:
 
 
 def _star_brightness(band: Band, st: pd.DataFrame) -> Floats:
-    # the brightest pixel in a 5-pixel box on each star, which is what a stamp sees
+    # the brightest pixel in a box on each star, which is what a stamp sees
     x, y = band.pixels(st.ra.to_numpy(float), st.dec.to_numpy(float))
     ix, iy = np.rint(x).astype(int), np.rint(y).astype(int)
     ny, nx = band.data.shape
     out = np.zeros(len(st))
-    for j in np.flatnonzero((ix >= 2) & (iy >= 2) & (ix < nx - 2) & (iy < ny - 2)):  # noqa: PLR2004 a 5-pixel box
-        box = band.data[iy[j] - 2 : iy[j] + 3, ix[j] - 2 : ix[j] + 3]
+    h = HALF_BOX
+    for j in np.flatnonzero((ix >= h) & (iy >= h) & (ix < nx - h) & (iy < ny - h)):
+        box = band.data[iy[j] - h : iy[j] + h + 1, ix[j] - h : ix[j] + h + 1]
         out[j] = np.nanmax(box) if np.isfinite(box).any() else 0
     return out
 
@@ -312,8 +270,8 @@ def _star_brightness(band: Band, st: pd.DataFrame) -> Floats:
 def _nearest(st: pd.DataFrame, t: pd.DataFrame) -> Floats:
     if not len(st):
         return np.full(len(t), np.inf)
-    dec0 = mid_dec(t)
-    d, _ = cKDTree(sky_xy(st.ra, st.dec, dec0)).query(sky_xy(t.ra, t.dec, dec0))
+    mid = mid_sky(t)
+    d, _ = cKDTree(sky_xy(st.ra, st.dec, mid)).query(sky_xy(t.ra, t.dec, mid))
     return np.asarray(d, float)
 
 
@@ -325,10 +283,7 @@ def flags(
     gaia: pd.DataFrame,
     lone: pd.DataFrame,
 ) -> None:
-    """Add every artefact test to `t` as a `flag_*` column.
-
-    `lone` is `blobs` over every band, of which only the colour bands' count here.
-    """
+    """Add every artefact test to `t` as a `flag_*` column."""
     colour = [bands[b] for b in cfg.colour]
     det = bands[cfg.detect]
     box = StampBoxes(t, colour[1])

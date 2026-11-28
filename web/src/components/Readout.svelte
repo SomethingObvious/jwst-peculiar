@@ -119,7 +119,6 @@
     };
   });
 
-  const save = $derived(verdicts.state);
   let copied = $state('');
   async function copy(text: string, what: string) {
     try {
@@ -339,12 +338,6 @@
             onchange={importFile}
           /></label
         >
-        <span class="dim small">
-          {#if save.kind === 'local'}<span class="num">{save.count}</span>
-            {save.count === 1 ? 'verdict' : 'verdicts'} in this browser{/if}
-          {#if !verdicts.storageOk}This browser is blocking storage, so export before
-            you close the tab.{/if}
-        </span>
       </div>
       {#if importMsg}<p class="quiet">{importMsg}</p>{/if}
     {/if}
@@ -469,9 +462,6 @@
   }
   dd .sub {
     display: block;
-    color: var(--chalk-3);
-  }
-  .dim {
     color: var(--chalk-3);
   }
   .gap {
